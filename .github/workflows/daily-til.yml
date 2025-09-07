@@ -63,7 +63,7 @@ jobs:
               status_code=$(curl -o /dev/null -s -w "%{http_code}" "https://date.nager.at/api/v3/IsTodayPublicHoliday/VN" || true)
               holiday_info=""
               if [ "$status_code" -eq 200 ]; then
-                holiday_info="- **Thông báo**: 🎉 Chúc mừng! Hôm nay là một ngày nghỉ lễ chính thức tại Việt Nam."
+                holiday_info="- **Thông báo**: 🎉 Hôm nay là một ngày nghỉ lễ tại Việt Nam."
               elif [ "$status_code" -eq 204 ]; then
                 holiday_info="- **Thông báo**: Hôm nay không phải là ngày nghỉ lễ."
               fi
@@ -275,10 +275,14 @@ jobs:
           
           file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/$(date +%F).md"
           
+          # TẠO BIẾN MÔ TẢ TRONG BASH ĐỂ TRÁNH LỖI JQ
+          description="File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết]($file_url)"
+
           # Xây dựng payload JSON bằng jq
           json_payload=$(jq -n \
             --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" \
             --arg url "$file_url" \
+            --arg description "$description" \
             --arg weather_value "$WEATHER_DATA" \
             --arg uv_value "$UV_DATA" \
             --arg advice_value "$ADVICE_DATA" \
@@ -290,7 +294,7 @@ jobs:
               "embeds": [{
                 "title": $title,
                 "url": $url,
-                "description": "File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết](" + $url + ")",
+                "description": $description,
                 "color": 3447003,
                 "fields": [
                   { "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },
