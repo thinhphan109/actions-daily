@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: daily-til
+  cancel-in-progress: true
+
 jobs:
   til:
     runs-on: ubuntu-latest
@@ -34,14 +38,131 @@ jobs:
             echo "Today's file already exists: $file"
           fi
 
+      - name: Append modules (1: Calendar, 7: Mini-kata, 15: Weather Hanoi)
+        shell: bash
+        env:
+          CITY: "Hà Nội"
+          LAT: "21.03"
+          LON: "105.85"
+        run: |
+          set -euo pipefail
+          export TZ=Asia/Ho_Chi_Minh
+
+          # Determine today's file
+          today=$(date +%F)
+          year=$(date +%Y); month=$(date +%m)
+          file="til/$year/$month/$today.md"
+          [ -f "$file" ] || { echo "Missing TIL file, creating..."; printf '# %s\n\n- Học được gì:\n- Code snippet:\n- Link PR/Issue trong ngày:\n' "$today" > "$file"; }
+
+          # Ensure jq exists (usually preinstalled)
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+
+          # ---------- Module 1: Calendar (offline) ----------
+          if ! grep -q '^<!-- MOD-1-CALENDAR -->$' "$file"; then
+            dow_num=$(date +%u) # 1..7
+            case "$dow_num" in
+              1) dow="Thứ Hai" ;;
+              2) dow="Thứ Ba" ;;
+              3) dow="Thứ Tư" ;;
+              4) dow="Thứ Năm" ;;
+              5) dow="Thứ Sáu" ;;
+              6) dow="Thứ Bảy" ;;
+              7) dow="Chủ Nhật" ;;
+            esac
+            iso_week=$(date +%V)
+            day_of_year=$(date +%j)
+            {
+              echo
+              echo "<!-- MOD-1-CALENDAR -->"
+              echo "## 📅 Hôm nay"
+              echo "- Ngày: $today ($dow)"
+              echo "- Tuần ISO: $iso_week — DayOfYear: $day_of_year"
+            } >> "$file"
+          fi
+
+          # ---------- Module 7: Mini-kata code (offline deck) ----------
+          if ! grep -q '^<!-- MOD-7-KATA -->$' "$file"; then
+            # Deck tĩnh (Python/JS). Mỗi ngày lấy 1 kata theo DayOfYear.
+            read -r -d '' KATAS <<'DECK'
+Implement a function `dedupe_keep_order(arr)` (Python) loại phần tử trùng, giữ nguyên thứ tự.
+Write `flattenN(arr, n)` (JS) phẳng mảng lồng tối đa độ sâu n.
+Viết `is_palindrome(s)` (Python) bỏ qua ký tự không chữ/số & không phân biệt hoa thường.
+Implement `throttle(fn, wait)` (JS) trả về hàm chỉ chạy tối đa 1 lần mỗi wait ms.
+Viết `fib_gen(n)` (Python) generator yield n số Fibonacci đầu tiên (không dùng đệ quy).
+Implement `formatVND(n)` (JS) trả về chuỗi tiền tệ VND (dùng Intl.NumberFormat nếu có).
+Viết `count_status(logs)` (Python) nhận list dòng log HTTP, trả về dict {status: count}.
+Implement `uniqueBy(arr, key)` (JS) loại trùng theo khóa (string hoặc accessor fn).
+Viết `two_sum(nums, target)` (Python) trả về cặp chỉ số i,j sao cho nums[i]+nums[j]=target.
+Implement `groupBy(arr, key)` (JS) nhóm phần tử theo thuộc tính/khóa.
+DECK
+            # Chuyển deck thành mảng dòng
+            IFS=$'\n' read -r -d '' -a KATA_ARR < <(printf '%s\n' "$KATAS" && printf '\0')
+            doy=$(date +%j) ; doy=$((10#$doy)) # strip leading zero
+            len=${#KATA_ARR[@]}
+            idx=$(( (doy - 1) % len ))
+            kata="${KATA_ARR[$idx]}"
+
+            {
+              echo
+              echo "<!-- MOD-7-KATA -->"
+              echo "## 🧩 Mini-kata (ngày $today)"
+              echo "- $kata"
+              echo
+              echo "Gợi ý khởi đầu:"
+              echo '```python'
+              echo '# TODO: giải ở đây'
+              echo '```'
+            } >> "$file"
+          fi
+
+          # ---------- Module 15: Weather (Open-Meteo, no key) ----------
+          if ! grep -q '^<!-- MOD-15-WEATHER -->$' "$file"; then
+            wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
+            if [ -n "$wjson" ]; then
+              temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty')
+              wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty')
+              code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty')
+              # Map mã thời tiết sang mô tả VN (gói gọn phổ biến)
+              desc="Không rõ"
+              case "$code" in
+                0) desc="Trời quang mây" ;;
+                1|2|3) desc="Ít mây / Nhiều mây" ;;
+                45|48) desc="Sương mù" ;;
+                51|53|55) desc="Mưa phùn" ;;
+                61|63|65) desc="Mưa vừa/đậm" ;;
+                71|73|75) desc="Tuyết rơi" ;;
+                80|81|82) desc="Mưa rào" ;;
+                95) desc="Dông" ;;
+                96|99) desc="Dông kèm mưa đá" ;;
+              esac
+              {
+                echo
+                echo "<!-- MOD-15-WEATHER -->"
+                echo "## 🌤️ Thời tiết ${CITY} (hiện tại)"
+                if [ -n "$temp" ] && [ -n "$wind" ] && [ -n "$code" ]; then
+                  echo "- Nhiệt độ: ${temp}°C"
+                  echo "- Gió: ${wind} km/h"
+                  echo "- Mã/Diễn giải: ${code} — ${desc}"
+                else
+                  echo "- (Không lấy được dữ liệu)"
+                fi
+              } >> "$file"
+            fi
+          fi
+
+          git add "$file"
+
       - name: Commit & push (if changes)
         shell: bash
         run: |
           set -euo pipefail
           if ! git diff --cached --quiet; then
-            git config user.name "${GITHUB_REPOSITORY_OWNER}"
-            git config user.email "${GITHUB_REPOSITORY_OWNER}@users.noreply.github.com"
-            git commit -m "docs(til): add $(date +%F)"
+            # Ghi danh tính là chính bạn để được tính contribution
+            git config user.name "${{ github.actor }}"
+            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git commit -m "chore(til): daily autosummary"
             git push
           else
             echo "No changes to commit"
