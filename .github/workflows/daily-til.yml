@@ -42,9 +42,8 @@ jobs:
           fi
 
           # ========================================================================
-          # === ĐỊNH NGHĨA CÁC HÀM MODULE ==========================================
+          # === ĐỊNH NGHĨA CÁC HÀM MODULE (PHIÊN BẢN BỀN BỈ HƠN) ===================
           # ========================================================================
-          # Lưu ý: `if ! grep -q ...` là để đảm bảo mỗi module chỉ chạy 1 lần/ngày
 
           function append_header() {
             if [ ! -f "$file" ]; then
@@ -64,9 +63,11 @@ jobs:
             if ! grep -q '<!-- LUNAR-MODULE -->' "$file"; then
               day=$(date +%d); month=$(date +%m); year=$(date +%Y)
               lunarjson=$(curl -fsSL "https://api.bebi.dev/lich-am?day=${day}&month=${month}&year=${year}" || true)
-              if [ -n "$lunarjson" ]; then
+              if [ -n "$lunarjson" ] && echo "$lunarjson" | jq -e . >/dev/null 2>&1; then
                 amlich=$(echo "$lunarjson" | jq -r '"\(.day)/\(.month)/\(.year)"'); canchi=$(echo "$lunarjson" | jq -r '"Ngày \(.day_can_chi), tháng \(.month_can_chi), năm \(.year_can_chi)"')
                 { echo; echo "<!-- LUNAR-MODULE -->"; echo "## 🌕 Lịch Âm"; echo "- **Âm lịch**: $amlich"; echo "- **Can Chi**: $canchi"; } >> "$file"
+              else
+                echo "Cảnh báo: API Lịch Âm (api.bebi.dev) thất bại. Bỏ qua module này."
               fi
             fi
           }
@@ -74,19 +75,27 @@ jobs:
           function append_weather() {
             if ! grep -q '<!-- WEATHER-MODULE -->' "$file"; then
               wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
-              if [ -n "$wjson" ]; then
+              if [ -n "$wjson" ] && echo "$wjson" | jq -e . >/dev/null 2>&1; then
                 temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty'); code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty'); desc="Không rõ"
                 case "$code" in 0) desc="Trời quang mây" ;; 1|2|3) desc="Ít mây / Nhiều mây" ;; 45|48) desc="Sương mù" ;; 51|53|55) desc="Mưa phùn" ;; 61|63|65) desc="Mưa vừa/đậm" ;; 80|81|82) desc="Mưa rào" ;; 95) desc="Dông" ;; *) desc="Không xác định" ;; esac
                 { echo; echo "---"; echo "<!-- WEATHER-MODULE -->"; echo "## 🌤️ Thời tiết tại ${CITY}"; if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi; } >> "$file"
+              else
+                echo "Cảnh báo: API Thời tiết (api.open-meteo.com) thất bại. Bỏ qua module này."
               fi
             fi
           }
 
           function append_financial_data() {
             if ! grep -q '<!-- FINANCE-MODULE -->' "$file"; then
-              ratejson=$(curl -fsSL "https://open.er-api.com/v6/latest/USD" || true); goldjson=$(curl -fsSL "https://api-gold.vercel.app/api/sjc" || true)
-              usd_vnd_rate="Đang cập nhật..."; if [ -n "$ratejson" ] && [ "$(echo "$ratejson" | jq -r '.result')" == '"success"' ]; then usd_vnd_rate=$(echo "$ratejson" | jq '.rates.VND | tonumber | printf "%.0f"' 2>/dev/null || echo "Lỗi"); fi
-              gold_sell="Đang cập nhật..."; if [ -n "$goldjson" ] && [ "$(echo "$goldjson" | jq 'length')" -gt 0 ]; then latest_gold=$(echo "$goldjson" | jq '.[0]'); gold_sell=$(echo "$latest_gold" | jq -r '.sell | tonumber / 1000 | tostring + " triệu"'); fi
+              ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
+              goldjson=$(curl --connect-timeout 5 -fsSL "https://api-gold.vercel.app/api/sjc" || true)
+              usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
+              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then
+                  usd_vnd_rate=$(echo "$ratejson" | jq '.rates.VND | tonumber | printf "%.0f"' 2>/dev/null || echo "Lỗi")
+              fi
+              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e . >/dev/null 2>&1; then
+                  latest_gold=$(echo "$goldjson" | jq '.[0]'); gold_sell=$(echo "$latest_gold" | jq -r '.sell | tonumber / 1000 | tostring + " triệu"')
+              fi
               { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
             fi
           }
@@ -94,7 +103,9 @@ jobs:
           function append_hacker_news() {
             if ! grep -q '<!-- HACKERNEWS-MODULE -->' "$file"; then
               hnjson=$(curl -fsSL "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=3" || true)
-              if [ -n "$hnjson" ]; then { echo; echo "---"; echo "<!-- HACKERNEWS-MODULE -->"; echo "## 📰 Top tin tức Hacker News"; echo "$hnjson" | jq -r '.hits[] | "- [\(.title)](\(.url))"'; } >> "$file"; fi
+              if [ -n "$hnjson" ] && echo "$hnjson" | jq -e . >/dev/null 2>&1; then 
+                { echo; echo "---"; echo "<!-- HACKERNEWS-MODULE -->"; echo "## 📰 Top tin tức Hacker News"; echo "$hnjson" | jq -r '.hits[] | "- [\(.title)](\(.url))"'; } >> "$file"
+              fi
             fi
           }
 
@@ -102,14 +113,16 @@ jobs:
             if ! grep -q '<!-- HISTORY-MODULE -->' "$file"; then
               month=$(date +%m); day=$(date +%d)
               histjson=$(curl -fsSL "https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}" || true)
-              if [ -n "$histjson" ]; then { echo; echo "---"; echo "<!-- HISTORY-MODULE -->"; echo "## 📜 Sự kiện lịch sử trong ngày"; echo "$histjson" | jq -r '.events[0:3][] | "- **\(.year)**: \(.text)"'; } >> "$file"; fi
+              if [ -n "$histjson" ] && echo "$histjson" | jq -e . >/dev/null 2>&1; then 
+                { echo; echo "---"; echo "<!-- HISTORY-MODULE -->"; echo "## 📜 Sự kiện lịch sử trong ngày"; echo "$histjson" | jq -r '.events[0:3][] | "- **\(.year)**: \(.text)"'; } >> "$file"
+              fi
             fi
           }
           
           function append_quote() {
             if ! grep -q '<!-- QUOTE-MODULE -->' "$file"; then
               qjson=$(curl -fsSL "https://api.quotable.io/random" || true)
-              if [ -n "$qjson" ]; then
+              if [ -n "$qjson" ] && echo "$qjson" | jq -e . >/dev/null 2>&1; then
                 content=$(echo "$qjson" | jq -r '.content // empty'); author=$(echo "$qjson" | jq -r '.author // empty')
                 { echo; echo "---"; echo "<!-- QUOTE-MODULE -->"; echo "## 💬 Trích dẫn trong ngày"; if [ -n "$content" ]; then echo "> $content"; echo ">"; echo "> — ***$author***"; else echo "- (Không lấy được dữ liệu)"; fi; } >> "$file"
               fi
@@ -119,7 +132,7 @@ jobs:
           function append_joke() {
             if ! grep -q '<!-- JOKE-MODULE -->' "$file"; then
               jokejson=$(curl -fsSL "https://readme-jokes.vercel.app/api" || true)
-              if [ -n "$jokejson" ]; then
+              if [ -n "$jokejson" ] && echo "$jokejson" | jq -e . >/dev/null 2>&1; then
                 setup=$(echo "$jokejson" | jq -r '.setup'); punchline=$(echo "$jokejson" | jq -r '.punchline')
                 { echo; echo "---"; echo "<!-- JOKE-MODULE -->"; echo "## 😂 Chuyện cười DEV"; echo "**Hỏi:** *$setup*"; echo "**Đáp:** *$punchline*"; } >> "$file"
               fi
@@ -163,3 +176,4 @@ jobs:
           else
             echo "Không có gì thay đổi để commit."
           fi
+
