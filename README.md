@@ -1,6 +1,6 @@
 # 🚀 Nhật Ký Tự Động Hóa Hàng Ngày
 
-_Tự động tạo “bản tin” Markdown cá nhân mỗi ngày bằng GitHub Actions, lấy dữ liệu từ các API công khai và gửi thông báo lên Discord._
+_Tự động tạo file trực tiếp tại dự án, cày commit contributions mỗi ngày bằng GitHub Actions, lấy dữ liệu từ các API công khai và gửi thông báo lên Discord._
 
 > **Múi giờ:** Asia/Ho_Chi_Minh • **Lịch chạy:** 00:05 (ICT) mỗi ngày
 
@@ -79,10 +79,6 @@ Dự án sử dụng một workflow duy nhất đặt tại **`.github/workflows
 - **Thông báo Discord:** Tuỳ chỉnh nội dung payload JSON gửi lên webhook (nhúng, màu sắc, avatar…).
 
 ---
-
-## 🧩 Cấu Trúc & Gợi Ý Module
-
-Mỗi module nên có một `MODULE-ID` **duy nhất** để tránh ghi lặp. Ví dụ:
 
 ## ❓ Hỏi Đáp & Khắc Phục Lỗi
 
