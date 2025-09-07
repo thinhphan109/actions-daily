@@ -17,9 +17,9 @@ jobs:
   create-daily-note:
     runs-on: ubuntu-latest
     env:
-      CITY: "Ha Noi"
-      LAT: "21.03"
-      LON: "105.85"
+      CITY: "Ho Chi Minh"
+      LAT: "10.82"
+      LON: "106.63"
       TZ: Asia/Ho_Chi_Minh
 
     steps:
@@ -37,6 +37,11 @@ jobs:
           if ! command -v jq >/dev/null 2>&1; then
             echo "jq not found. Installing..."
             sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          # Đảm bảo bc được cài đặt cho các phép tính tài chính
+          if ! command -v bc >/dev/null 2>&1; then
+            echo "bc not found. Installing..."
+            sudo apt-get update -y && sudo apt-get install -y bc
           fi
 
           # ========================================================================
@@ -109,8 +114,20 @@ jobs:
             if ! grep -q '<!-- CRYPTO-MODULE -->' "$file"; then
               cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd" || true)
               if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then
-                btc_price=$(echo "$cryptojson" | jq -r '.bitcoin.usd | tonumber | printf "%.2f"')
-                eth_price=$(echo "$cryptojson" | jq -r '.ethereum.usd | tonumber | printf "%.2f"')
+                # Lấy dữ liệu thô bằng jq
+                btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd')
+                eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd')
+                
+                btc_price="N/A"; eth_price="N/A"
+                
+                # Định dạng bằng printf của shell để tránh lỗi quoting
+                if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then
+                    btc_price=$(printf "%.2f" "$btc_price_raw")
+                fi
+                if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then
+                    eth_price=$(printf "%.2f" "$eth_price_raw")
+                fi
+
                 { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo "- **Bitcoin (BTC)**: \$${btc_price} USD"; echo "- **Ethereum (ETH)**: \$${eth_price} USD"; } >> "$file"
               fi
             fi
