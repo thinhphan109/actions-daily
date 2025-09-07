@@ -79,7 +79,16 @@ jobs:
               if [ -n "$wjson" ] && echo "$wjson" | jq -e . >/dev/null 2>&1; then
                 temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty');
                 uv_index=$(echo "$wjson" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1)
-                { echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"; echo "- **Nhiệt độ**: ${temp}°C / **Gió**: ${wind} km/h"; if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index"; fi; } >> "$file"
+                uv_desc="Không xác định"
+                if [ -n "$uv_index" ]; then
+                    if (( uv_index <= 2 )); then uv_desc="Thấp - Không cần bảo vệ"
+                    elif (( uv_index <= 5 )); then uv_desc="Trung bình - Cần che chắn"
+                    elif (( uv_index <= 7 )); then uv_desc="Cao - Cần bôi kem chống nắng"
+                    elif (( uv_index <= 10 )); then uv_desc="Rất cao - Hạn chế ra ngoài"
+                    else uv_desc="Cực kỳ cao - Tránh ra ngoài trời"
+                    fi
+                fi
+                { echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"; echo "- **Nhiệt độ**: ${temp}°C / **Gió**: ${wind} km/h"; if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index ($uv_desc)"; fi; } >> "$file"
               fi
             fi
           }
@@ -89,21 +98,8 @@ jobs:
               ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
               goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true)
               usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
-              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then
-                  rate_raw=$(echo "$ratejson" | jq -r '.rates.VND')
-                  if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then
-                      usd_vnd_rate=$(printf "%.0f" "$rate_raw")
-                  fi
-              fi
-              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then
-                  gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1)
-                  if [ -n "$gold_sell_raw" ] && [ "$gold_sell_raw" != "null" ]; then
-                      gold_sell_formatted=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l))
-                      gold_sell="${gold_sell_formatted} triệu"
-                  fi
-              else
-                  echo "Cảnh báo: Không thể lấy dữ liệu giá vàng hoặc API trả về rỗng."
-              fi
+              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then rate_raw=$(echo "$ratejson" | jq -r '.rates.VND'); if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then usd_vnd_rate=$(printf "%.0f" "$rate_raw"); fi; fi
+              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1); if [ -n "$gold_sell_raw" ] && [ "$gold_sell_raw" != "null" ]; then gold_sell_formatted=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l)); gold_sell="${gold_sell_formatted} triệu"; fi; fi
               { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
             fi
           }
@@ -113,14 +109,7 @@ jobs:
               COIN_IDS="bitcoin,ethereum,solana,binancecoin,ripple,dogecoin,tether"
               cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=${COIN_IDS}&vs_currencies=usd" || true)
               if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then
-                output=""
-                btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd'); if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then btc_price=$(printf "%.2f" "$btc_price_raw"); output+="- **Bitcoin (BTC)**: \$${btc_price} USD\n"; fi
-                eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd'); if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then eth_price=$(printf "%.2f" "$eth_price_raw"); output+="- **Ethereum (ETH)**: \$${eth_price} USD\n"; fi
-                sol_price_raw=$(echo "$cryptojson" | jq -r '.solana.usd'); if [ -n "$sol_price_raw" ] && [ "$sol_price_raw" != "null" ]; then sol_price=$(printf "%.2f" "$sol_price_raw"); output+="- **Solana (SOL)**: \$${sol_price} USD\n"; fi
-                bnb_price_raw=$(echo "$cryptojson" | jq -r '.binancecoin.usd'); if [ -n "$bnb_price_raw" ] && [ "$bnb_price_raw" != "null" ]; then bnb_price=$(printf "%.2f" "$bnb_price_raw"); output+="- **BNB**: \$${bnb_price} USD\n"; fi
-                xrp_price_raw=$(echo "$cryptojson" | jq -r '.ripple.usd'); if [ -n "$xrp_price_raw" ] && [ "$xrp_price_raw" != "null" ]; then xrp_price=$(printf "%.4f" "$xrp_price_raw"); output+="- **XRP**: \$${xrp_price} USD\n"; fi
-                doge_price_raw=$(echo "$cryptojson" | jq -r '.dogecoin.usd'); if [ -n "$doge_price_raw" ] && [ "$doge_price_raw" != "null" ]; then doge_price=$(printf "%.4f" "$doge_price_raw"); output+="- **Dogecoin (DOGE)**: \$${doge_price} USD\n"; fi
-                usdt_price_raw=$(echo "$cryptojson" | jq -r '.tether.usd'); if [ -n "$usdt_price_raw" ] && [ "$usdt_price_raw" != "null" ]; then usdt_price=$(printf "%.4f" "$usdt_price_raw"); output+="- **Tether (USDT)**: \$${usdt_price} USD\n"; fi
+                output=""; btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd'); if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then btc_price=$(printf "%.2f" "$btc_price_raw"); output+="- **Bitcoin (BTC)**: \$${btc_price} USD\n"; fi; eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd'); if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then eth_price=$(printf "%.2f" "$eth_price_raw"); output+="- **Ethereum (ETH)**: \$${eth_price} USD\n"; fi; sol_price_raw=$(echo "$cryptojson" | jq -r '.solana.usd'); if [ -n "$sol_price_raw" ] && [ "$sol_price_raw" != "null" ]; then sol_price=$(printf "%.2f" "$sol_price_raw"); output+="- **Solana (SOL)**: \$${sol_price} USD\n"; fi; bnb_price_raw=$(echo "$cryptojson" | jq -r '.binancecoin.usd'); if [ -n "$bnb_price_raw" ] && [ "$bnb_price_raw" != "null" ]; then bnb_price=$(printf "%.2f" "$bnb_price_raw"); output+="- **BNB**: \$${bnb_price} USD\n"; fi; xrp_price_raw=$(echo "$cryptojson" | jq -r '.ripple.usd'); if [ -n "$xrp_price_raw" ] && [ "$xrp_price_raw" != "null" ]; then xrp_price=$(printf "%.4f" "$xrp_price_raw"); output+="- **XRP**: \$${xrp_price} USD\n"; fi; doge_price_raw=$(echo "$cryptojson" | jq -r '.dogecoin.usd'); if [ -n "$doge_price_raw" ] && [ "$doge_price_raw" != "null" ]; then doge_price=$(printf "%.4f" "$doge_price_raw"); output+="- **Dogecoin (DOGE)**: \$${doge_price} USD\n"; fi; usdt_price_raw=$(echo "$cryptojson" | jq -r '.tether.usd'); if [ -n "$usdt_price_raw" ] && [ "$usdt_price_raw" != "null" ]; then usdt_price=$(printf "%.4f" "$usdt_price_raw"); output+="- **Tether (USDT)**: \$${usdt_price} USD\n"; fi
                 output=$(echo -e "${output}" | sed '/^$/d')
                 { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo -e "$output"; } >> "$file"
               fi
@@ -131,13 +120,8 @@ jobs:
             if ! grep -q '<!-- ISS-MODULE -->' "$file"; then
               issjson=$(curl -fsSL "http://api.open-notify.org/iss-now.json" || true)
               if [ -n "$issjson" ] && echo "$issjson" | jq -e . >/dev/null 2>&1; then
-                lat=$(echo "$issjson" | jq -r '.iss_position.latitude'); lon=$(echo "$issjson" | jq -r '.iss_position.longitude')
-                geo_json=$(curl -fsSL "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en" || true)
-                location="Trên đại dương hoặc khu vực không xác định"
-                if [ -n "$geo_json" ] && echo "$geo_json" | jq -e . >/dev/null 2>&1; then
-                  country=$(echo "$geo_json" | jq -r '.countryName // empty'); city=$(echo "$geo_json" | jq -r '.city // empty'); principalSubdivision=$(echo "$geo_json" | jq -r '.principalSubdivision // empty')
-                  if [ -n "$country" ]; then location="$country"; if [ -n "$principalSubdivision" ]; then location="$principalSubdivision, $location"; fi; if [ -n "$city" ]; then location="$city, $location"; fi; fi
-                fi
+                lat=$(echo "$issjson" | jq -r '.iss_position.latitude'); lon=$(echo "$issjson" | jq -r '.iss_position.longitude'); geo_json=$(curl -fsSL "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en" || true); location="Trên đại dương hoặc khu vực không xác định"
+                if [ -n "$geo_json" ] && echo "$geo_json" | jq -e . >/dev/null 2>&1; then country=$(echo "$geo_json" | jq -r '.countryName // empty'); city=$(echo "$geo_json" | jq -r '.city // empty'); principalSubdivision=$(echo "$geo_json" | jq -r '.principalSubdivision // empty'); if [ -n "$country" ]; then location="$country"; if [ -n "$principalSubdivision" ]; then location="$principalSubdivision, $location"; fi; if [ -n "$city" ]; then location="$city, $location"; fi; fi; fi
                 { echo; echo "---"; echo "<!-- ISS-MODULE -->"; echo "## 🛰️ Vị Trí Trạm ISS"; echo "- **Vị trí hiện tại**: $location"; echo "- **Tọa độ**: $lat, $lon"; } >> "$file"
               fi
             fi
@@ -147,8 +131,7 @@ jobs:
             if ! grep -q '<!-- LAUNCH-MODULE -->' "$file"; then
               launchjson=$(curl -fsSL "https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=1" || true)
               if [ -n "$launchjson" ] && echo "$launchjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then
-                launch=$(echo "$launchjson" | jq '.results[0]'); name=$(echo "$launch" | jq -r '.name'); mission=$(echo "$launch" | jq -r '.mission.name'); iso_date=$(echo "$launch" | jq -r '.window_start')
-                launch_time=$(date -d "$iso_date" +"%d/%m/%Y, %H:%M (Giờ Việt Nam)")
+                launch=$(echo "$launchjson" | jq '.results[0]'); name=$(echo "$launch" | jq -r '.name'); mission=$(echo "$launch" | jq -r '.mission.name'); iso_date=$(echo "$launch" | jq -r '.window_start'); launch_time=$(date -d "$iso_date" +"%d/%m/%Y, %H:%M (Giờ Việt Nam)")
                 { echo; echo "---"; echo "<!-- LAUNCH-MODULE -->"; echo "## 🚀 Lịch Phóng Tên Lửa"; echo "- **Tên lửa**: $name"; echo "- **Nhiệm vụ**: $mission"; echo "- **Thời gian dự kiến**: $launch_time"; } >> "$file"
               fi
             fi
@@ -158,11 +141,8 @@ jobs:
             if ! grep -q '<!-- ADVICE-MODULE -->' "$file"; then
               advice_en_json=$(curl -fsSL "https://api.adviceslip.com/advice" || true)
               if [ -n "$advice_en_json" ] && echo "$advice_en_json" | jq -e . >/dev/null 2>&1; then
-                advice_en=$(echo "$advice_en_json" | jq -r '.slip.advice'); advice_vi="$advice_en"; advice_en_encoded=$(echo "$advice_en" | sed 's/ /%20/g')
-                translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${advice_en_encoded}&langpair=en|vi" || true)
-                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then
-                  translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$advice_en" ]; then advice_vi="$translated_text"; fi
-                fi
+                advice_en=$(echo "$advice_en_json" | jq -r '.slip.advice'); advice_vi="$advice_en"; advice_en_encoded=$(echo "$advice_en" | sed 's/ /%20/g'); translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${advice_en_encoded}&langpair=en|vi" || true)
+                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$advice_en" ]; then advice_vi="$translated_text"; fi; fi
                 { echo; echo "---"; echo "<!-- ADVICE-MODULE -->"; echo "## 💡 Lời khuyên ngắn"; echo "> $advice_vi"; } >> "$file"
               fi
             fi
@@ -172,16 +152,24 @@ jobs:
             if ! grep -q '<!-- NUMBERS-MODULE -->' "$file"; then
               numjson_en=$(curl -fsSL "http://numbersapi.com/random/trivia?json" || true)
               if [ -n "$numjson_en" ] && echo "$numjson_en" | jq -e . >/dev/null 2>&1; then
-                fact_en=$(echo "$numjson_en" | jq -r '.text'); fact_vi="$fact_en"; fact_en_encoded=$(echo "$fact_en" | sed 's/ /%20/g')
-                translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${fact_en_encoded}&langpair=en|vi" || true)
-                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then
-                  translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$fact_en" ]; then fact_vi="$translated_text"; fi
-                fi
+                fact_en=$(echo "$numjson_en" | jq -r '.text'); fact_vi="$fact_en"; fact_en_encoded=$(echo "$fact_en" | sed 's/ /%20/g'); translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${fact_en_encoded}&langpair=en|vi" || true)
+                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$fact_en" ]; then fact_vi="$translated_text"; fi; fi
                 { echo; echo "---"; echo "<!-- NUMBERS-MODULE -->"; echo "## #️⃣ Sự Thật Về Con Số"; echo "> $fact_vi"; } >> "$file"
               fi
             fi
           }
           
+          function append_stoic_quote() {
+            if ! grep -q '<!-- STOIC-MODULE -->' "$file"; then
+              stoicjson=$(curl -fsSL "https://stoic-quotes.com/api/quote" || true)
+              if [ -n "$stoicjson" ] && echo "$stoicjson" | jq -e . >/dev/null 2>&1; then
+                quote_en=$(echo "$stoicjson" | jq -r '.quote'); author=$(echo "$stoicjson" | jq -r '.author'); quote_vi="$quote_en"; quote_en_encoded=$(echo "$quote_en" | sed 's/ /%20/g'); translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${quote_en_encoded}&langpair=en|vi" || true)
+                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$quote_en" ]; then quote_vi="$translated_text"; fi; fi
+                { echo; echo "---"; echo "<!-- STOIC-MODULE -->"; echo "## 🏛️ Triết Lý Stoic"; echo "> $quote_vi"; echo ">"; echo "> — ***$author***"; } >> "$file"
+              fi
+            fi
+          }
+
           function append_footer() {
             if ! grep -q '<!-- FOOTER-MODULE -->' "$file"; then
               { echo; echo "---"; echo "<!-- FOOTER-MODULE -->"; echo "> *Ghi chú này được tạo tự động bởi [GitHub Actions](https://github.com/features/actions).*" ; } >> "$file"
@@ -202,6 +190,7 @@ jobs:
           append_rocket_launch
           append_numbers_fact
           append_advice
+          append_stoic_quote
           append_footer
           echo "Hoàn thành cập nhật nội dung."
           
@@ -214,33 +203,23 @@ jobs:
           wjson_discord=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
           weather_line="Thời tiết: Đang cập nhật..."; uv_line="Chỉ số UV: Đang cập nhật..."
           if [ -n "$wjson_discord" ] && echo "$wjson_discord" | jq -e . >/dev/null 2>&1; then
-            temp=$(echo "$wjson_discord" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson_discord" | jq -r '.current_weather.windspeed // empty');
-            weather_line="Nhiệt độ: ${temp}°C, gió ${wind} km/h"
-            uv_index=$(echo "$wjson_discord" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1); if [ -n "$uv_index" ]; then uv_line="Cao nhất: $uv_index"; fi
+            temp=$(echo "$wjson_discord" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson_discord" | jq -r '.current_weather.windspeed // empty'); weather_line="Nhiệt độ: ${temp}°C, gió ${wind} km/h"
+            uv_index=$(echo "$wjson_discord" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1); if [ -n "$uv_index" ]; then uv_desc=""; if (( uv_index <= 2 )); then uv_desc="Thấp"; elif (( uv_index <= 5 )); then uv_desc="Trung bình"; elif (( uv_index <= 7 )); then uv_desc="Cao"; elif (( uv_index <= 10 )); then uv_desc="Rất cao"; else uv_desc="Cực kỳ cao"; fi; uv_line="Cao nhất: $uv_index ($uv_desc)"; fi
           fi
 
           advice_discord_json=$(curl -fsSL "https://api.adviceslip.com/advice" || true)
           advice_line="Hôm nay là một ngày tuyệt vời!"
           if [ -n "$advice_discord_json" ] && echo "$advice_discord_json" | jq -e . >/dev/null 2>&1; then
-            advice_en=$(echo "$advice_discord_json" | jq -r '.slip.advice'); advice_vi="$advice_en"; advice_en_encoded=$(echo "$advice_en" | sed 's/ /%20/g')
-            translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${advice_en_encoded}&langpair=en|vi" || true)
-            if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then
-              translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$advice_en" ]; then advice_vi="$translated_text"; fi
-            fi
+            advice_en=$(echo "$advice_discord_json" | jq -r '.slip.advice'); advice_vi="$advice_en"; advice_en_encoded=$(echo "$advice_en" | sed 's/ /%20/g'); translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${advice_en_encoded}&langpair=en|vi" || true)
+            if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$advice_en" ]; then advice_vi="$translated_text"; fi; fi
             advice_line="$advice_vi"
           fi
 
           holiday_discord_status=$(curl -o /dev/null -s -w "%{http_code}" "https://date.nager.at/api/v3/IsTodayPublicHoliday/VN" || true)
           holiday_line=""
-          if [ "$holiday_discord_status" -eq 200 ]; then
-            holiday_line="🎉 Chúc mừng! Hôm nay là ngày nghỉ lễ."
-          fi
+          if [ "$holiday_discord_status" -eq 200 ]; then holiday_line="🎉 Chúc mừng! Hôm nay là ngày nghỉ lễ."; fi
 
-          # Xuất dữ liệu ra GITHUB_OUTPUT để bước sau có thể sử dụng
-          echo "weather_field_value=$weather_line" >> $GITHUB_OUTPUT
-          echo "uv_field_value=$uv_line" >> $GITHUB_OUTPUT
-          echo "advice_field_value=$advice_line" >> $GITHUB_OUTPUT
-          echo "holiday_field_value=$holiday_line" >> $GITHUB_OUTPUT
+          echo "weather_field_value=$weather_line" >> $GITHUB_OUTPUT; echo "uv_field_value=$uv_line" >> $GITHUB_OUTPUT; echo "advice_field_value=$advice_line" >> $GITHUB_OUTPUT; echo "holiday_field_value=$holiday_line" >> $GITHUB_OUTPUT
 
       - name: Commit và đẩy code lên repo (nếu có thay đổi)
         id: commit_step
@@ -248,14 +227,9 @@ jobs:
         run: |
           set -euo pipefail
           if ! git diff --cached --quiet; then
-            echo "changes=true" >> $GITHUB_OUTPUT
-            git config user.name "${{ github.actor }}"
-            git config user.email "${{ github.actor }}@users.noreply.github.com"
-            git commit -m "📝 Cập nhật nhật ký tự động ngày $(date +%F)"
-            git push
+            echo "changes=true" >> $GITHUB_OUTPUT; git config user.name "${{ github.actor }}"; git config user.email "${{ github.actor }}@users.noreply.github.com"; git commit -m "📝 Cập nhật nhật ký tự động ngày $(date +%F)"; git push
           else
-            echo "changes=false" >> $GITHUB_OUTPUT
-            echo "Không có gì thay đổi để commit."
+            echo "changes=false" >> $GITHUB_OUTPUT; echo "Không có gì thay đổi để commit."
           fi
 
       - name: Gửi thông báo đến Discord
@@ -268,45 +242,9 @@ jobs:
           ADVICE_DATA: ${{ steps.update_file.outputs.advice_field_value }}
           HOLIDAY_DATA: ${{ steps.update_file.outputs.holiday_field_value }}
         run: |
-          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-            echo "Cảnh báo: DISCORD_WEBHOOK_URL secret chưa được thiết lập. Bỏ qua việc gửi thông báo."
-            exit 0
-          fi
-          
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then echo "Cảnh báo: DISCORD_WEBHOOK_URL secret chưa được thiết lập. Bỏ qua việc gửi thông báo."; exit 0; fi
           file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/$(date +%F).md"
-          
-          # TẠO BIẾN MÔ TẢ TRONG BASH ĐỂ TRÁNH LỖI JQ
           description="File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết]($file_url)"
-
-          # Xây dựng payload JSON bằng jq
-          json_payload=$(jq -n \
-            --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" \
-            --arg url "$file_url" \
-            --arg description "$description" \
-            --arg weather_value "$WEATHER_DATA" \
-            --arg uv_value "$UV_DATA" \
-            --arg advice_value "$ADVICE_DATA" \
-            --arg holiday_value "$HOLIDAY_DATA" \
-            '
-            {
-              "username": "Nhật Ký Bot",
-              "avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
-              "embeds": [{
-                "title": $title,
-                "url": $url,
-                "description": $description,
-                "color": 3447003,
-                "fields": [
-                  { "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },
-                  { "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },
-                  { "name": "💡 Lời khuyên ngắn", "value": $advice_value, "inline": false }
-                ],
-                "footer": { "text": "Cập nhật lúc" },
-                "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"
-              }]
-            }
-            | .embeds[0].fields += (if $holiday_value != "" then [{ "name": "🇻🇳 Ngày Lễ Việt Nam", "value": $holiday_value, "inline": false }] else [] end)
-            ')
-
+          json_payload=$(jq -n --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" --arg url "$file_url" --arg description "$description" --arg weather_value "$WEATHER_DATA" --arg uv_value "$UV_DATA" --arg advice_value "$ADVICE_DATA" --arg holiday_value "$HOLIDAY_DATA" '{"username": "Nhật Ký Bot","avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png","embeds": [{"title": $title,"url": $url,"description": $description,"color": 3447003,"fields": [{ "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },{ "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },{ "name": "💡 Lời khuyên ngắn", "value": $advice_value, "inline": false }],"footer": { "text": "Cập nhật lúc" },"timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"}]} | .embeds[0].fields += (if $holiday_value != "" then [{ "name": "🇻🇳 Ngày Lễ Việt Nam", "value": $holiday_value, "inline": false }] else [] end)')
           curl -H "Content-Type: application/json" -d "$json_payload" "$DISCORD_WEBHOOK_URL"
 
