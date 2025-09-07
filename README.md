@@ -12,7 +12,6 @@ _Tự động tạo file trực tiếp tại dự án, cày commit contributions
 - [⚙️ Cách Hoạt Động](#️-cách-hoạt-động)
 - [🛠️ Hướng Dẫn Cài Đặt](#️-hướng-dẫn-cài-đặt)
 - [🎨 Tùy Chỉnh](#-tùy-chỉnh)
-- [🧩 Cấu Trúc & Gợi Ý Module](#-cấu-trúc--gợi-ý-module)
 - [❓ Hỏi Đáp & Khắc Phục Lỗi](#-hỏi-đáp--khắc-phục-lỗi)
 - [📄 Giấy Phép](#-giấy-phép)
 
@@ -91,7 +90,7 @@ Dự án sử dụng một workflow duy nhất đặt tại **`.github/workflows
 
 ## 📄 Giấy Phép
 
-Phát hành theo giấy phép **MIT**. Xem file [`LICENSE`](LICENSE) nếu có.
+Phát hành theo giấy phép **MIT**. Xem [`LICENSE`](LICENSE).
 
 ---
 
