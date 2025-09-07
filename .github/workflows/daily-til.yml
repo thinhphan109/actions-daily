@@ -1,13 +1,16 @@
-name: Daily TIL
+name: Daily TIL - Tự động tạo ghi chú hàng ngày
 
 on:
   schedule:
-    - cron: '5 17 * * *'  # 17:05 UTC = 00:05 ICT
-  workflow_dispatch:
+    # Chạy vào 00:05 giờ Việt Nam mỗi ngày (17:05 UTC)
+    - cron: '5 17 * * *'
+  workflow_dispatch: # Cho phép chạy thủ công
 
+# Cấp quyền để action có thể ghi vào repository
 permissions:
   contents: write
 
+# Đảm bảo chỉ có một workflow chạy tại một thời điểm cho group này
 concurrency:
   group: daily-til
   cancel-in-progress: true
@@ -15,148 +18,220 @@ concurrency:
 jobs:
   til:
     runs-on: ubuntu-latest
+    env:
+      # Cấu hình chung cho toàn bộ job
+      CITY: "Ha Noi"
+      LAT: "21.03"
+      LON: "105.85"
+      TZ: Asia/Ho_Chi_Minh # Áp dụng múi giờ Việt Nam
+
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create today's TIL (if missing)
+      - name: 1. Tạo file ghi chú của ngày hôm nay (nếu chưa có)
         shell: bash
         run: |
           set -euo pipefail
-          export TZ=Asia/Ho_Chi_Minh
           today=$(date +%F)
-          year=$(date +%Y)
-          month=$(date +%m)
+          year=$(date +%Y); month=$(date +%m)
           dir="til/$year/$month"
           file="$dir/$today.md"
+          
           mkdir -p "$dir"
           if [ ! -f "$file" ]; then
-            printf '# %s\n' "$today" > "$file"
+            printf '# Ghi chú nhanh ngày %s\n' "$today" > "$file"
             git add "$file"
           else
-            echo "Today's file already exists: $file"
+            echo "File của ngày hôm nay đã tồn tại: $file"
           fi
 
-      - name: Append modules (Calendar + Kata + Weather)
+      - name: 2. Thêm các module nội dung tự động
         shell: bash
-        env:
-          CITY: "Ha Noi"
-          LAT: "21.03"
-          LON: "105.85"
         run: |
           set -euo pipefail
-          export TZ=Asia/Ho_Chi_Minh
-
-          # Today's file
+          
+          # --- Định nghĩa đường dẫn file ---
           today=$(date +%F)
           year=$(date +%Y); month=$(date +%m)
           file="til/$year/$month/$today.md"
           [ -f "$file" ] || printf '# %s\n' "$today" > "$file"
 
-          # jq (if missing)
+          # --- Cài đặt công cụ cần thiết (nếu thiếu) ---
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y && sudo apt-get install -y jq
           fi
 
-          # --- Module 1: Calendar (offline, idempotent)
-          if ! grep -q '^<!-- MOD-1-CALENDAR -->$' "$file"; then
-            dow_num=$(date +%u)
-            case "$dow_num" in
-              1) dow="Thứ Hai" ;;
-              2) dow="Thứ Ba" ;;
-              3) dow="Thứ Tư" ;;
-              4) dow="Thứ Năm" ;;
-              5) dow="Thứ Sáu" ;;
-              6) dow="Thứ Bảy" ;;
-              7) dow="Chủ Nhật" ;;
-            esac
-            iso_week=$(date +%V)
-            day_of_year=$(date +%j)
-            {
-              echo
-              echo "<!-- MOD-1-CALENDAR -->"
-              echo "## Hom nay"
-              echo "- Ngay: $today ($dow)"
-              echo "- Tuan ISO: $iso_week — DayOfYear: $day_of_year"
-            } >> "$file"
-          fi
+          # ========================================================================
+          # === ĐỊNH NGHĨA TẤT CẢ CÁC HÀM MODULE ===================================
+          # ========================================================================
 
-          # --- Module 7: Mini-kata (offline deck)
-          if ! grep -q '^<!-- MOD-7-KATA -->$' "$file"; then
-            KATA_ARR=(
-              'Implement a function `dedupe_keep_order(arr)` (Python) loai phan tu trung, giu nguyen thu tu.'
-              'Write `flattenN(arr, n)` (JS) phang mang long toi da do sau n.'
-              'Viet `is_palindrome(s)` (Python) bo qua ky tu khong chu/so & khong phan biet hoa thuong.'
-              'Implement `throttle(fn, wait)` (JS) tra ve ham chi chay toi da 1 lan moi wait ms.'
-              'Viet `fib_gen(n)` (Python) generator yield n so Fibonacci dau tien (khong dung de quy).'
-              'Implement `formatVND(n)` (JS) tra ve chuoi tien te VND (Intl.NumberFormat neu co).'
-              'Viet `count_status(logs)` (Python) tra ve dict {status: count} tu danh sach log HTTP.'
-              'Implement `uniqueBy(arr, key)` (JS) loai trung theo khoa (string hoac accessor fn).'
-              'Viet `two_sum(nums, target)` (Python) tra ve cap chi so i,j sao cho nums[i]+nums[j]=target.'
-              'Implement `groupBy(arr, key)` (JS) nhom phan tu theo thuoc tinh/khoa.'
-            )
-            doy=$(date +%j); doy=$((10#$doy))
-            len=${#KATA_ARR[@]}
-            idx=$(( (doy - 1) % len ))
-            kata="${KATA_ARR[$idx]}"
-            {
-              echo
-              echo "<!-- MOD-7-KATA -->"
-              echo "## Mini-kata"
-              echo "- $kata"
-              echo
-              echo "Go i y khoi dau:"
-              echo '```python'
-              echo '# TODO: giai o day'
-              echo '```'
-            } >> "$file"
-          fi
-
-          # --- Module 15: Weather (Open-Meteo, no key)
-          if ! grep -q '^<!-- MOD-15-WEATHER -->$' "$file"; then
-            wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
-            if [ -n "$wjson" ]; then
-              temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty')
-              wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty')
-              code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty')
-              desc="Khong ro"
-              case "$code" in
-                0) desc="Troi quang may" ;;
-                1|2|3) desc="It may / Nhieu may" ;;
-                45|48) desc="Suong mu" ;;
-                51|53|55) desc="Mua phun" ;;
-                61|63|65) desc="Mua vua/dam" ;;
-                71|73|75) desc="Tuyet roi" ;;
-                80|81|82) desc="Mua rao" ;;
-                95) desc="Dong" ;;
-                96|99) desc="Dong kem mua da" ;;
-              esac
-              {
-                echo
-                echo "<!-- MOD-15-WEATHER -->"
-                echo "## Thoi tiet $CITY (hien tai)"
-                if [ -n "${temp}" ] && [ -n "${wind}" ] && [ -n "${code}" ]; then
-                  echo "- Nhiet do: ${temp}°C"
-                  echo "- Gio: ${wind} km/h"
-                  echo "- Ma/ Dien giai: ${code} — ${desc}"
-                else
-                  echo "- (Khong lay duoc du lieu)"
-                fi
-              } >> "$file"
+          function append_calendar() {
+            if ! grep -q '^$' "$file"; then
+              dow_num=$(date +%u); case "$dow_num" in 1) dow="Thứ Hai" ;; 2) dow="Thứ Ba" ;; 3) dow="Thứ Tư" ;; 4) dow="Thứ Năm" ;; 5) dow="Thứ Sáu" ;; 6) dow="Thứ Bảy" ;; 7) dow="Chủ Nhật" ;; esac
+              iso_week=$(date +%V); day_of_year=$(date +%j)
+              { echo; echo ""; echo "## Lịch Hôm Nay"; echo "- Ngày: $today ($dow)"; echo "- Tuần (ISO): $iso_week — Ngày thứ: $day_of_year"; } >> "$file"
             fi
-          fi
+          }
 
+          function append_weather() {
+            if ! grep -q '^$' "$file"; then
+              wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
+              if [ -n "$wjson" ]; then
+                temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty'); code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty'); desc="Không rõ"
+                case "$code" in 0) desc="Trời quang mây" ;; 1|2|3) desc="Ít mây / Nhiều mây" ;; 45|48) desc="Sương mù" ;; 51|53|55) desc="Mưa phùn" ;; 61|63|65) desc="Mưa vừa/đậm" ;; 80|81|82) desc="Mưa rào" ;; 95) desc="Dông" ;; *) desc="Không xác định" ;; esac
+                { echo; echo ""; echo "## Thời tiết tại ${CITY}"; if [ -n "${temp}" ]; then echo "- Nhiệt độ: ${temp}°C"; echo "- Gió: ${wind} km/h"; echo "- Hiện tượng: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi; } >> "$file"
+              fi
+            fi
+          }
+          
+          function append_quote() {
+            if ! grep -q '^$' "$file"; then
+              qjson=$(curl -fsSL "https://api.quotable.io/random" || true)
+              if [ -n "$qjson" ]; then
+                content=$(echo "$qjson" | jq -r '.content // empty'); author=$(echo "$qjson" | jq -r '.author // empty')
+                { echo; echo ""; echo "## Trích dẫn trong ngày"; if [ -n "$content" ]; then echo "> $content"; echo ">"; echo "> — ***$author***"; else echo "- (Không lấy được dữ liệu)"; fi; } >> "$file"
+              fi
+            fi
+          }
+          
+          function append_hacker_news() {
+            if ! grep -q '^$' "$file"; then
+              hnjson=$(curl -fsSL "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=5" || true)
+              if [ -n "$hnjson" ]; then { echo; echo ""; echo "## Top 5 tin tức Hacker News"; echo "$hnjson" | jq -r '.hits[] | "- [\(.title)](\(.url))"'; } >> "$file"; fi
+            fi
+          }
+
+          function append_history() {
+            if ! grep -q '^$' "$file"; then
+              month=$(date +%m); day=$(date +%d)
+              histjson=$(curl -fsSL "https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}" || true)
+              if [ -n "$histjson" ]; then { echo; echo ""; echo "## Sự kiện lịch sử trong ngày"; echo "$histjson" | jq -r '.events[0:3][] | "- **\(.year)**: \(.text)"'; } >> "$file"; fi
+            fi
+          }
+          
+          function append_lunar_calendar() {
+            if ! grep -q '^$' "$file"; then
+              day=$(date +%d); month=$(date +%m); year=$(date +%Y)
+              lunarjson=$(curl -fsSL "https://api.bebi.dev/lich-am?day=${day}&month=${month}&year=${year}" || true)
+              if [ -n "$lunarjson" ]; then
+                amlich=$(echo "$lunarjson" | jq -r '"\(.day)/\(.month)/\(.year)"'); canchi=$(echo "$lunarjson" | jq -r '"Ngày \(.day_can_chi) tháng \(.month_can_chi) năm \(.year_can_chi)"')
+                { echo; echo ""; echo "## Lịch Âm"; echo "- Âm lịch: $amlich"; echo "- Can Chi: $canchi"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_nasa_apod() {
+            if ! grep -q '^$' "$file"; then
+              apodjson=$(curl -fsSL "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY" || true)
+              if [ -n "$apodjson" ]; then
+                title=$(echo "$apodjson" | jq -r '.title // empty'); explanation=$(echo "$apodjson" | jq -r '.explanation // empty' | sed -n '1p'); img_url=$(echo "$apodjson" | jq -r '.hdurl // .url // empty')
+                { echo; echo ""; echo "## Ảnh thiên văn trong ngày của NASA"; if [ -n "$title" ]; then echo "### $title"; echo "> $explanation"; echo ""; echo "![${title}](${img_url})"; else echo "- (Không lấy được dữ liệu từ NASA)"; fi; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_github_trending() {
+            if ! grep -q '^$' "$file"; then
+              repojson=$(curl -fsSL "https://gtrend.yapie.me/repositories?since=daily" || true)
+              if [ -n "$repojson" ] && [ "$(echo "$repojson" | jq 'length')" -gt 0 ]; then
+                repo=$(echo "$repojson" | jq '.[0]'); name=$(echo "$repo" | jq -r '.name'); author=$(echo "$repo" | jq -r '.author'); url=$(echo "$repo" | jq -r '.url'); desc=$(echo "$repo" | jq -r '.description'); lang=$(echo "$repo" | jq -r '.language'); stars=$(echo "$repo" | jq -r '.stars')
+                { echo; echo ""; echo "## Repo nổi bật trên GitHub"; echo "- **[\`$author/$name\`]($url)**"; echo "  - **Sao**: $stars ★"; echo "  - **Ngôn ngữ**: $lang"; echo "  - **Mô tả**: $desc"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_joke() {
+            if ! grep -q '^$' "$file"; then
+              jokejson=$(curl -fsSL "https://readme-jokes.vercel.app/api" || true)
+              if [ -n "$jokejson" ]; then
+                setup=$(echo "$jokejson" | jq -r '.setup'); punchline=$(echo "$jokejson" | jq -r '.punchline')
+                { echo; echo ""; echo "## Chuyện cười DEV"; echo "**Hỏi:** *$setup*"; echo "**Đáp:** *$punchline*"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_vietnam_news() {
+            if ! grep -q '^$' "$file"; then
+              RSS_URL="https%3A%2F%2Fvnexpress.net%2Frss%2Ftin-moi-nhat.rss"
+              newsjson=$(curl -fsSL "https://api.rss2json.com/v1/api.json?rss_url=${RSS_URL}" || true)
+              if [ -n "$newsjson" ] && [ "$(echo "$newsjson" | jq '.status')" == '"ok"' ]; then
+                { echo; echo ""; echo "## Tin tức nổi bật từ VnExpress"; echo "$newsjson" | jq -r '.items[0:3][] | "- [\((.title | sub("^[ \t\n\r]+|[ \t\n\r]+$";"")))](\(.link))"'; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_financial_data() {
+            if ! grep -q '^$' "$file"; then
+              ratejson=$(curl -fsSL "https://open.er-api.com/v6/latest/USD" || true); goldjson=$(curl -fsSL "https://api-gold.vercel.app/api/sjc" || true)
+              usd_vnd_rate="Đang cập nhật..."; if [ -n "$ratejson" ] && [ "$(echo "$ratejson" | jq -r '.result')" == '"success"' ]; then usd_vnd_rate=$(echo "$ratejson" | jq '.rates.VND | tonumber | printf "%.0f"' 2>/dev/null || echo "Lỗi"); fi
+              gold_sell="Đang cập nhật..."; if [ -n "$goldjson" ] && [ "$(echo "$goldjson" | jq 'length')" -gt 0 ]; then latest_gold=$(echo "$goldjson" | jq '.[0]'); gold_sell=$(echo "$latest_gold" | jq -r '.sell | tonumber / 1000 | tostring + " triệu"'); fi
+              { echo; echo ""; echo "## Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
+            fi
+          }
+
+          function append_epic_free_games() {
+            if ! grep -q '^$' "$file"; then
+              gamesjson=$(curl -fsSL "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=en-US&country=VN&allowCountries=VN" || true)
+              if [ -n "$gamesjson" ]; then
+                free_games_list=$(echo "$gamesjson" | jq -r '.data.Catalog.searchStore.elements | map(select(.promotions != null and .promotions.promotionalOffers | length > 0)) | map(select(.promotions.promotionalOffers[0].promotionalOffers[0].discountSetting.discountPercentage == 0)) | map("- **\(.title)** (Miễn phí đến: \(.promotions.promotionalOffers[0].promotionalOffers[0].endDate | fromdate | strftime("%d/%m/%Y")))") | .[]')
+                { echo; echo ""; echo "## Game miễn phí trên Epic Games"; if [ -n "$free_games_list" ]; then echo "$free_games_list"; else echo "- Hiện không có game miễn phí nổi bật."; fi; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_wikipedia_random() {
+            if ! grep -q '^$' "$file"; then
+              wikijson=$(curl -fsSL "https://vi.wikipedia.org/api/rest_v1/page/random/summary" || true)
+              if [ -n "$wikijson" ]; then
+                title=$(echo "$wikijson" | jq -r '.title'); extract=$(echo "$wikijson" | jq -r '.extract'); url=$(echo "$wikijson" | jq -r '.content_urls.desktop.page')
+                { echo; echo ""; echo "## Hôm nay tôi học (từ Wikipedia)"; echo "### [$title]($url)"; echo "> $extract"; } >> "$file"
+              fi
+            fi
+          }
+          
+          function append_xkcd_comic() {
+            if ! grep -q '^$' "$file"; then
+              xkcdjson=$(curl -fsSL "https://xkcd.com/info.0.json" || true)
+              if [ -n "$xkcdjson" ]; then
+                title=$(echo "$xkcdjson" | jq -r '.safe_title'); img_url=$(echo "$xkcdjson" | jq -r '.img'); alt_text=$(echo "$xkcdjson" | jq -r '.alt')
+                { echo; echo ""; echo "## Truyện tranh XKCD hôm nay"; echo "### $title"; echo "![${title}](${img_url})"; echo ""; echo "*Chú thích ẩn (alt-text): ${alt_text}*"; } >> "$file"
+              fi
+            fi
+          }
+
+          # ========================================================================
+          # === GỌI CÁC HÀM ĐỂ THÊM NỘI DUNG (THEO THỨ TỰ BẠN MUỐN) ================
+          # ========================================================================
+          echo "Bắt đầu thêm các module nội dung..."
+          append_calendar
+          append_lunar_calendar
+          append_weather
+          append_financial_data
+          append_vietnam_news
+          append_hacker_news
+          append_github_trending
+          append_wikipedia_random
+          append_history
+          append_nasa_apod
+          append_quote
+          append_epic_free_games
+          append_joke
+          append_xkcd_comic
+          echo "Hoàn thành việc thêm nội dung."
+
+          # --- Thêm file vào staging area để chuẩn bị commit ---
           git add "$file"
 
-      - name: Commit & push (if changes)
+      - name: 3. Commit và đẩy code lên repo (nếu có thay đổi)
         shell: bash
         run: |
           set -euo pipefail
           if ! git diff --cached --quiet; then
             git config user.name "${{ github.actor }}"
             git config user.email "${{ github.actor }}@users.noreply.github.com"
-            git commit -m "chore(til): daily autosummary"
+            git commit -m "chore(til): cập nhật tự động ghi chú hàng ngày"
             git push
           else
-            echo "No changes to commit"
+            echo "Không có gì thay đổi để commit."
           fi
