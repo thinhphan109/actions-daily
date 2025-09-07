@@ -32,7 +32,7 @@ jobs:
           file="$dir/$today.md"
           mkdir -p "$dir"
           if [ ! -f "$file" ]; then
-            printf '# %s\n\n- Học được gì:\n- Code snippet:\n- Link PR/Issue trong ngày:\n' "$today" > "$file"
+            printf '# %s\n' "$today" > "$file"
             git add "$file"
           else
             echo "Today's file already exists: $file"
@@ -41,7 +41,7 @@ jobs:
       - name: Append modules (1: Calendar, 7: Mini-kata, 15: Weather Hanoi)
         shell: bash
         env:
-          CITY: "Ha Noi"   # để ASCII cho YAML chắc chắn
+          CITY: "Ha Noi"   # ASCII cho chắc YAML
           LAT: "21.03"
           LON: "105.85"
         run: |
@@ -52,7 +52,7 @@ jobs:
           today=$(date +%F)
           year=$(date +%Y); month=$(date +%m)
           file="til/$year/$month/$today.md"
-          [ -f "$file" ] || printf '# %s\n\n- Học được gì:\n- Code snippet:\n- Link PR/Issue trong ngày:\n' "$today" > "$file"
+          [ -f "$file" ] || printf '# %s\n' "$today" > "$file"
 
           # Cài jq nếu thiếu
           if ! command -v jq >/dev/null 2>&1; then
