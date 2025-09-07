@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cập nhật nội dung tự động
+        id: update_file # Thêm ID để các bước sau có thể truy cập output
         shell: bash
         run: |
           set -euo pipefail
@@ -34,6 +35,7 @@ jobs:
           today=$(date +%F)
           file="$today.md"
 
+          # Cài đặt các công cụ cần thiết
           if ! command -v jq >/dev/null 2>&1 || ! command -v bc >/dev/null 2>&1; then
             echo "Installing missing tools (jq, bc)..."
             sudo apt-get update -y && sudo apt-get install -y jq bc
@@ -57,6 +59,21 @@ jobs:
             fi
           }
 
+          function append_holiday_check() {
+            if ! grep -q '<!-- HOLIDAY-MODULE -->' "$file"; then
+              status_code=$(curl -o /dev/null -s -w "%{http_code}" "https://date.nager.at/api/v3/IsTodayPublicHoliday/VN" || true)
+              holiday_info=""
+              if [ "$status_code" -eq 200 ]; then
+                holiday_info="- **Thông báo**: 🎉 Chúc mừng! Hôm nay là một ngày nghỉ lễ chính thức tại Việt Nam."
+              elif [ "$status_code" -eq 204 ]; then
+                holiday_info="- **Thông báo**: Hôm nay không phải là ngày nghỉ lễ."
+              fi
+              if [ -n "$holiday_info" ]; then
+                { echo; echo "<!-- HOLIDAY-MODULE -->"; echo "## 🇻🇳 Ngày Lễ Việt Nam"; echo "$holiday_info"; } >> "$file"
+              fi
+            fi
+          }
+
           function append_weather_and_uv() {
             if ! grep -q '<!-- WEATHER-UV-MODULE -->' "$file"; then
               wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
@@ -67,66 +84,74 @@ jobs:
               fi
             fi
           }
-          
+
           function append_cve_news() {
             if ! grep -q '<!-- CVE-MODULE -->' "$file"; then
               cvejson=$(curl -fsSL "https://cve.circl.lu/api/last" || true)
               if [ -n "$cvejson" ] && echo "$cvejson" | jq -e '.[0]' >/dev/null 2>&1; then
                 latest_cve=$(echo "$cvejson" | jq '.[0]')
-                cve_id=$(echo "$latest_cve" | jq -r '.id')
-                cve_summary=$(echo "$latest_cve" | jq -r '.summary')
+                cve_id=$(echo "$latest_cve" | jq -r '.id'); cve_summary=$(echo "$latest_cve" | jq -r '.summary')
                 { echo; echo "---"; echo "<!-- CVE-MODULE -->"; echo "## 🛡️ Cảnh Báo An Ninh Mạng (CVE)"; echo "- **Mã lỗi**: $cve_id"; echo "- **Tóm tắt**: $cve_summary"; } >> "$file"
+              else
+                echo "Cảnh báo: Không thể lấy dữ liệu CVE hoặc API trả về rỗng."
+              fi
+            fi
+          }
+
+          function append_iss_location() {
+            if ! grep -q '<!-- ISS-MODULE -->' "$file"; then
+              issjson=$(curl -fsSL "http://api.open-notify.org/iss-now.json" || true)
+              if [ -n "$issjson" ] && echo "$issjson" | jq -e . >/dev/null 2>&1; then
+                lat=$(echo "$issjson" | jq -r '.iss_position.latitude'); lon=$(echo "$issjson" | jq -r '.iss_position.longitude')
+                geo_json=$(curl -fsSL "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en" || true)
+                location="Trên đại dương hoặc khu vực không xác định"
+                if [ -n "$geo_json" ] && echo "$geo_json" | jq -e . >/dev/null 2>&1; then
+                  country=$(echo "$geo_json" | jq -r '.countryName // empty'); city=$(echo "$geo_json" | jq -r '.city // empty'); principalSubdivision=$(echo "$geo_json" | jq -r '.principalSubdivision // empty')
+                  if [ -n "$country" ]; then location="$country"; if [ -n "$principalSubdivision" ]; then location="$principalSubdivision, $location"; fi; if [ -n "$city" ]; then location="$city, $location"; fi; fi
+                fi
+                { echo; echo "---"; echo "<!-- ISS-MODULE -->"; echo "## 🛰️ Vị Trí Trạm ISS"; echo "- **Vị trí hiện tại**: $location"; echo "- **Tọa độ**: $lat, $lon"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_rocket_launch() {
+            if ! grep -q '<!-- LAUNCH-MODULE -->' "$file"; then
+              launchjson=$(curl -fsSL "https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=1" || true)
+              if [ -n "$launchjson" ] && echo "$launchjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then
+                launch=$(echo "$launchjson" | jq '.results[0]'); name=$(echo "$launch" | jq -r '.name'); mission=$(echo "$launch" | jq -r '.mission.name'); iso_date=$(echo "$launch" | jq -r '.window_start')
+                launch_time=$(date -d "$iso_date" +"%d/%m/%Y, %H:%M (Giờ Việt Nam)")
+                { echo; echo "---"; echo "<!-- LAUNCH-MODULE -->"; echo "## 🚀 Lịch Phóng Tên Lửa"; echo "- **Tên lửa**: $name"; echo "- **Nhiệm vụ**: $mission"; echo "- **Thời gian dự kiến**: $launch_time"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_advice() {
+            if ! grep -q '<!-- ADVICE-MODULE -->' "$file"; then
+              advice_en_json=$(curl -fsSL "https://api.adviceslip.com/advice" || true)
+              if [ -n "$advice_en_json" ] && echo "$advice_en_json" | jq -e . >/dev/null 2>&1; then
+                advice_en=$(echo "$advice_en_json" | jq -r '.slip.advice'); advice_vi="$advice_en"; advice_en_encoded=$(echo "$advice_en" | sed 's/ /%20/g')
+                translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${advice_en_encoded}&langpair=en|vi" || true)
+                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then
+                  translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$advice_en" ]; then advice_vi="$translated_text"; fi
+                fi
+                { echo; echo "---"; echo "<!-- ADVICE-MODULE -->"; echo "## 💡 Lời khuyên ngắn"; echo "> $advice_vi"; } >> "$file"
+              fi
+            fi
+          }
+
+          function append_numbers_fact() {
+            if ! grep -q '<!-- NUMBERS-MODULE -->' "$file"; then
+              numjson=$(curl -fsSL "http://numbersapi.com/random/trivia?json" || true)
+              if [ -n "$numjson" ] && echo "$numjson" | jq -e . >/dev/null 2>&1; then
+                fact=$(echo "$numjson" | jq -r '.text')
+                { echo; echo "---"; echo "<!-- NUMBERS-MODULE -->"; echo "## #️⃣ Sự Thật Về Con Số"; echo "> $fact"; } >> "$file"
               fi
             fi
           }
           
-          function append_word_of_the_day() {
-            if ! grep -q '<!-- WORD-MODULE -->' "$file"; then
-              word=$(curl -fsSL "https://random-word-api.herokuapp.com/word" | jq -r '.[0]')
-              if [ -n "$word" ]; then
-                defjson=$(curl -fsSL "https://api.dictionaryapi.dev/api/v2/entries/en/${word}" || true)
-                if [ -n "$defjson" ] && ! echo "$defjson" | jq -e '.title == "No Definitions Found"'; then
-                  definition=$(echo "$defjson" | jq -r '.[0].meanings[0].definitions[0].definition // empty')
-                  phonetic=$(echo "$defjson" | jq -r '.[0].phonetic // ""')
-                  { echo; echo "---"; echo "<!-- WORD-MODULE -->"; echo "## ✍️ Từ Vựng Truyền Cảm Hứng"; echo "- **Từ**: \`$word\` ($phonetic)"; echo "- **Định nghĩa**: $definition"; } >> "$file"
-                fi
-              fi
-            fi
-          }
-
-          function append_game_quote() {
-            if ! grep -q '<!-- GAME-QUOTE-MODULE -->' "$file"; then
-              gamejson=$(curl -fsSL "https://gaming-quotes.vercel.app/api/random" || true)
-              if [ -n "$gamejson" ] && echo "$gamejson" | jq -e . >/dev/null 2>&1; then
-                quote=$(echo "$gamejson" | jq -r '.quote')
-                author=$(echo "$gamejson" | jq -r '.author')
-                { echo; echo "---"; echo "<!-- GAME-QUOTE-MODULE -->"; echo "## 💬 Trích Dẫn Từ Thế Giới Game"; echo "> \"$quote\""; echo ">"; echo "> — ***$author***"; } >> "$file"
-              fi
-            fi
-          }
-
-          function append_art_of_the_day() {
-            if ! grep -q '<!-- ART-MODULE -->' "$file"; then
-              pagination_json=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id&limit=1" || true)
-              if [ -n "$pagination_json" ] && echo "$pagination_json" | jq -e . >/dev/null 2>&1; then
-                total_pages=$(echo "$pagination_json" | jq -r '.pagination.total_pages // 1000')
-                random_page=$((1 + RANDOM % total_pages))
-                artjson=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id,title,artist_display,image_id&limit=1&page=${random_page}" || true)
-                if [ -n "$artjson" ] && [ "$(echo "$artjson" | jq -r '.data | length')" -gt 0 ]; then
-                  artwork=$(echo "$artjson" | jq '.data[0]')
-                  title=$(echo "$artwork" | jq -r '.title'); artist=$(echo "$artwork" | jq -r '.artist_display' | sed 's/<[^>]*>//g' | cut -d ',' -f 1 | head -n 1); image_id=$(echo "$artwork" | jq -r '.image_id')
-                  if [ "$image_id" != "null" ]; then
-                    image_url="https://www.artic.edu/iiif/2/${image_id}/full/843,/0/default.jpg"
-                    { echo; echo "---"; echo "<!-- ART-MODULE -->"; echo "## 🖼️ Tác Phẩm Nghệ Thuật Trong Ngày"; echo "- **Tên**: $title"; echo "- **Tác giả**: $artist"; echo "![${title}](${image_url})"; } >> "$file"
-                  fi
-                fi
-              fi
-            fi
-          }
-
           function append_footer() {
             if ! grep -q '<!-- FOOTER-MODULE -->' "$file"; then
-              { echo; echo "---"; echo "<!-- FOOT-MODULE -->"; echo "> *Ghi chú này được tạo tự động bởi [GitHub Actions](https://github.com/features/actions).*" ; } >> "$file"
+              { echo; echo "---"; echo "<!-- FOOTER-MODULE -->"; echo "> *Ghi chú này được tạo tự động bởi [GitHub Actions](https://github.com/features/actions).*" ; } >> "$file"
             fi
           }
 
@@ -136,15 +161,41 @@ jobs:
           echo "Bắt đầu cập nhật file: $file"
           append_header
           append_calendar
+          append_holiday_check
           append_weather_and_uv
           append_cve_news
-          append_word_of_the_day
-          append_game_quote
-          append_art_of_the_day
+          append_iss_location
+          append_rocket_launch
+          append_numbers_fact
+          append_advice
           append_footer
           echo "Hoàn thành cập nhật nội dung."
           
           git add "$file"
+          
+          # ========================================================================
+          # === TẠO DỮ LIỆU CHO THÔNG BÁO DISCORD ==================================
+          # ========================================================================
+          echo "Đang tạo tóm tắt cho Discord..."
+          wjson_discord=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
+          weather_line="Thời tiết: Đang cập nhật..."; uv_line="Chỉ số UV: Đang cập nhật..."
+          if [ -n "$wjson_discord" ] && echo "$wjson_discord" | jq -e . >/dev/null 2>&1; then
+            temp=$(echo "$wjson_discord" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson_discord" | jq -r '.current_weather.windspeed // empty');
+            weather_line="Nhiệt độ: ${temp}°C, gió ${wind} km/h"
+            uv_index=$(echo "$wjson_discord" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1); if [ -n "$uv_index" ]; then uv_line="Cao nhất: $uv_index"; fi
+          fi
+
+          qjson_discord=$(curl -fsSL "https://api.quotable.io/random" || true)
+          quote_line="Hôm nay là một ngày tuyệt vời!"
+          if [ -n "$qjson_discord" ] && echo "$qjson_discord" | jq -e . >/dev/null 2>&1; then
+            content=$(echo "$qjson_discord" | jq -r '.content // empty'); author=$(echo "$qjson_discord" | jq -r '.author // empty');
+            quote_line="\"$content\" — *$author*"
+          fi
+
+          # Xuất dữ liệu ra GITHUB_OUTPUT để bước sau có thể sử dụng
+          echo "weather_field_value=$weather_line" >> $GITHUB_OUTPUT
+          echo "uv_field_value=$uv_line" >> $GITHUB_OUTPUT
+          echo "quote_field_value=$quote_line" >> $GITHUB_OUTPUT
 
       - name: Commit và đẩy code lên repo (nếu có thay đổi)
         id: commit_step
@@ -167,6 +218,9 @@ jobs:
         shell: bash
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WEATHER_DATA: ${{ steps.update_file.outputs.weather_field_value }}
+          UV_DATA: ${{ steps.update_file.outputs.uv_field_value }}
+          QUOTE_DATA: ${{ steps.update_file.outputs.quote_field_value }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then
             echo "Cảnh báo: DISCORD_WEBHOOK_URL secret chưa được thiết lập. Bỏ qua việc gửi thông báo."
@@ -176,17 +230,25 @@ jobs:
           file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/$(date +%F).md"
           
           json_payload=$(jq -n \
-            --arg title "📝 Nhật Ký Tự Động Hóa - $(date +%F)" \
+            --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" \
             --arg url "$file_url" \
-            --arg description "File nhật ký cho ngày hôm nay đã được tạo và cập nhật thành công. [Nhấn vào đây để xem]($file_url)" \
+            --arg weather_value "$WEATHER_DATA" \
+            --arg uv_value "$UV_DATA" \
+            --arg quote_value "$QUOTE_DATA" \
             '{
-              "username": "GitHub Actions Bot",
+              "username": "Nhật Ký Bot",
               "avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
               "embeds": [{
                 "title": $title,
                 "url": $url,
-                "description": $description,
+                "description": "File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết]($url)",
                 "color": 3447003,
+                "fields": [
+                  { "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },
+                  { "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },
+                  { "name": "💬 Trích dẫn trong ngày", "value": $quote_value, "inline": false }
+                ],
+                "footer": { "text": "Cập nhật lúc" },
                 "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"
               }]
             }')
