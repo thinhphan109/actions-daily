@@ -31,18 +31,16 @@ jobs:
         run: |
           set -euo pipefail
           
-          # --- ĐỊNH NGHĨA TÊN FILE TẠI THƯ MỤC GỐC ---
           today=$(date +%F)
           file="$today.md"
 
-          # --- Cài đặt công cụ cần thiết (nếu thiếu) ---
           if ! command -v jq >/dev/null 2>&1; then
             echo "jq not found. Installing..."
             sudo apt-get update -y && sudo apt-get install -y jq
           fi
 
           # ========================================================================
-          # === ĐỊNH NGHĨA CÁC HÀM MODULE (PHIÊN BẢN BỀN BỈ HƠN) ===================
+          # === ĐỊNH NGHĨA CÁC HÀM MODULE ==========================================
           # ========================================================================
 
           function append_header() {
@@ -59,28 +57,31 @@ jobs:
             fi
           }
 
-          function append_lunar_calendar() {
-            if ! grep -q '<!-- LUNAR-MODULE -->' "$file"; then
-              day=$(date +%d); month=$(date +%m); year=$(date +%Y)
-              lunarjson=$(curl -fsSL "https://api.bebi.dev/lich-am?day=${day}&month=${month}&year=${year}" || true)
-              if [ -n "$lunarjson" ] && echo "$lunarjson" | jq -e . >/dev/null 2>&1; then
-                amlich=$(echo "$lunarjson" | jq -r '"\(.day)/\(.month)/\(.year)"'); canchi=$(echo "$lunarjson" | jq -r '"Ngày \(.day_can_chi), tháng \(.month_can_chi), năm \(.year_can_chi)"')
-                { echo; echo "<!-- LUNAR-MODULE -->"; echo "## 🌕 Lịch Âm"; echo "- **Âm lịch**: $amlich"; echo "- **Can Chi**: $canchi"; } >> "$file"
-              else
-                echo "Cảnh báo: API Lịch Âm (api.bebi.dev) thất bại. Bỏ qua module này."
-              fi
-            fi
-          }
-
-          function append_weather() {
-            if ! grep -q '<!-- WEATHER-MODULE -->' "$file"; then
-              wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
+          function append_weather_and_uv() {
+            if ! grep -q '<!-- WEATHER-UV-MODULE -->' "$file"; then
+              wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
               if [ -n "$wjson" ] && echo "$wjson" | jq -e . >/dev/null 2>&1; then
                 temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty'); code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty'); desc="Không rõ"
                 case "$code" in 0) desc="Trời quang mây" ;; 1|2|3) desc="Ít mây / Nhiều mây" ;; 45|48) desc="Sương mù" ;; 51|53|55) desc="Mưa phùn" ;; 61|63|65) desc="Mưa vừa/đậm" ;; 80|81|82) desc="Mưa rào" ;; 95) desc="Dông" ;; *) desc="Không xác định" ;; esac
-                { echo; echo "---"; echo "<!-- WEATHER-MODULE -->"; echo "## 🌤️ Thời tiết tại ${CITY}"; if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi; } >> "$file"
+                
+                uv_index=$(echo "$wjson" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1)
+                uv_desc="Không xác định"
+                if [ -n "$uv_index" ]; then
+                    if (( uv_index <= 2 )); then uv_desc="Thấp - Không cần bảo vệ"
+                    elif (( uv_index <= 5 )); then uv_desc="Trung bình - Cần che chắn"
+                    elif (( uv_index <= 7 )); then uv_desc="Cao - Cần bôi kem chống nắng"
+                    elif (( uv_index <= 10 )); then uv_desc="Rất cao - Hạn chế ra ngoài"
+                    else uv_desc="Cực kỳ cao - Tránh ra ngoài trời"
+                    fi
+                fi
+
+                { 
+                  echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"
+                  if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi
+                  if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index ($uv_desc)"; fi
+                } >> "$file"
               else
-                echo "Cảnh báo: API Thời tiết (api.open-meteo.com) thất bại. Bỏ qua module này."
+                echo "Cảnh báo: API Thời tiết/UV thất bại. Bỏ qua module này."
               fi
             fi
           }
@@ -88,53 +89,58 @@ jobs:
           function append_financial_data() {
             if ! grep -q '<!-- FINANCE-MODULE -->' "$file"; then
               ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
-              goldjson=$(curl --connect-timeout 5 -fsSL "https://api-gold.vercel.app/api/sjc" || true)
+              goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true) # API VÀNG MỚI
               usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
               if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then
                   usd_vnd_rate=$(echo "$ratejson" | jq '.rates.VND | tonumber | printf "%.0f"' 2>/dev/null || echo "Lỗi")
               fi
-              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e . >/dev/null 2>&1; then
-                  latest_gold=$(echo "$goldjson" | jq '.[0]'); gold_sell=$(echo "$latest_gold" | jq -r '.sell | tonumber / 1000 | tostring + " triệu"')
+              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results' >/dev/null 2>&1; then
+                  gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1)
+                  if [ -n "$gold_sell_raw" ]; then
+                    gold_sell=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l))
+                    gold_sell="${gold_sell} triệu"
+                  fi
               fi
               { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
             fi
           }
           
-          function append_hacker_news() {
-            if ! grep -q '<!-- HACKERNEWS-MODULE -->' "$file"; then
-              hnjson=$(curl -fsSL "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=3" || true)
-              if [ -n "$hnjson" ] && echo "$hnjson" | jq -e . >/dev/null 2>&1; then 
-                { echo; echo "---"; echo "<!-- HACKERNEWS-MODULE -->"; echo "## 📰 Top tin tức Hacker News"; echo "$hnjson" | jq -r '.hits[] | "- [\(.title)](\(.url))"'; } >> "$file"
-              fi
-            fi
-          }
-
-          function append_history() {
-            if ! grep -q '<!-- HISTORY-MODULE -->' "$file"; then
-              month=$(date +%m); day=$(date +%d)
-              histjson=$(curl -fsSL "https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}" || true)
-              if [ -n "$histjson" ] && echo "$histjson" | jq -e . >/dev/null 2>&1; then 
-                { echo; echo "---"; echo "<!-- HISTORY-MODULE -->"; echo "## 📜 Sự kiện lịch sử trong ngày"; echo "$histjson" | jq -r '.events[0:3][] | "- **\(.year)**: \(.text)"'; } >> "$file"
+          function append_crypto_prices() {
+            if ! grep -q '<!-- CRYPTO-MODULE -->' "$file"; then
+              cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd" || true)
+              if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then
+                btc_price=$(echo "$cryptojson" | jq -r '.bitcoin.usd | tonumber | printf "%.2f"')
+                eth_price=$(echo "$cryptojson" | jq -r '.ethereum.usd | tonumber | printf "%.2f"')
+                { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo "- **Bitcoin (BTC)**: \$${btc_price} USD"; echo "- **Ethereum (ETH)**: \$${eth_price} USD"; } >> "$file"
               fi
             fi
           }
           
-          function append_quote() {
-            if ! grep -q '<!-- QUOTE-MODULE -->' "$file"; then
-              qjson=$(curl -fsSL "https://api.quotable.io/random" || true)
-              if [ -n "$qjson" ] && echo "$qjson" | jq -e . >/dev/null 2>&1; then
-                content=$(echo "$qjson" | jq -r '.content // empty'); author=$(echo "$qjson" | jq -r '.author // empty')
-                { echo; echo "---"; echo "<!-- QUOTE-MODULE -->"; echo "## 💬 Trích dẫn trong ngày"; if [ -n "$content" ]; then echo "> $content"; echo ">"; echo "> — ***$author***"; else echo "- (Không lấy được dữ liệu)"; fi; } >> "$file"
-              fi
+          function append_enchantment_idea() {
+            if ! grep -q '<!-- ENCHANTMENT-MODULE -->' "$file"; then
+              IDEAS_ARRAY=(
+                "**Tên**: Sét Đánh Trả | **Hiệu ứng**: Khi bị tấn công, có 10% cơ hội gọi một tia sét xuống kẻ tấn công. | **Áp dụng cho**: Giáp"
+                "**Tên**: Hút Sinh Lực | **Hiệu ứng**: Mỗi đòn đánh hồi lại 5% sát thương gây ra thành máu. | **Áp dụng cho**: Vũ khí cận chiến"
+                "**Tên**: Đạn Xuyên Thấu | **Hiệu ứng**: Mũi tên bắn ra có thể xuyên qua tối đa 2 mục tiêu, gây 75% sát thương cho mục tiêu thứ hai. | **Áp dụng cho**: Cung"
+                "**Tên**: Bước Chân Băng Giá | **Hiệu ứng**: Tạo ra một vệt băng tạm thời trên mặt nước khi di chuyển. | **Áp dụng cho**: Giày"
+                "**Tên**: Lưỡi Kiếm Độc Tố | **Hiệu ứng**: Đòn đánh có 20% cơ hội gây hiệu ứng Độc II trong 5 giây. | **Áp dụng cho**: Kiếm"
+              )
+              day_of_year=$(date +%j); day_of_year=$((10#$day_of_year)); len=${#IDEAS_ARRAY[@]}; idx=$(( (day_of_year - 1) % len )); idea="${IDEAS_ARRAY[$idx]}"
+              { echo; echo "---"; echo "<!-- ENCHANTMENT-MODULE -->"; echo "## 🪄 Ý Tưởng Enchantment"; echo "> $idea"; } >> "$file"
             fi
           }
-
-          function append_joke() {
-            if ! grep -q '<!-- JOKE-MODULE -->' "$file"; then
-              jokejson=$(curl -fsSL "https://readme-jokes.vercel.app/api" || true)
-              if [ -n "$jokejson" ] && echo "$jokejson" | jq -e . >/dev/null 2>&1; then
-                setup=$(echo "$jokejson" | jq -r '.setup'); punchline=$(echo "$jokejson" | jq -r '.punchline')
-                { echo; echo "---"; echo "<!-- JOKE-MODULE -->"; echo "## 😂 Chuyện cười DEV"; echo "**Hỏi:** *$setup*"; echo "**Đáp:** *$punchline*"; } >> "$file"
+          
+          function append_art_of_the_day() {
+            if ! grep -q '<!-- ART-MODULE -->' "$file"; then
+              # Lấy một tác phẩm ngẫu nhiên từ 1000 trang đầu tiên
+              random_page=$((1 + RANDOM % 1000))
+              artjson=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id,title,artist_display,image_id&limit=1&page=${random_page}" || true)
+              if [ -n "$artjson" ] && [ "$(echo "$artjson" | jq -r '.data | length')" -gt 0 ]; then
+                title=$(echo "$artjson" | jq -r '.data[0].title'); artist=$(echo "$artjson" | jq -r '.data[0].artist_display'); image_id=$(echo "$artjson" | jq -r '.data[0].image_id')
+                if [ "$image_id" != "null" ]; then
+                  image_url="https://www.artic.edu/iiif/2/${image_id}/full/843,/0/default.jpg"
+                  { echo; echo "---"; echo "<!-- ART-MODULE -->"; echo "## 🖼️ Tác Phẩm Nghệ Thuật Trong Ngày"; echo "- **Tên**: $title"; echo "- **Tác giả**: $artist"; echo "![${title}](${image_url})"; } >> "$file"
+                fi
               fi
             fi
           }
@@ -151,17 +157,14 @@ jobs:
           echo "Bắt đầu cập nhật file: $file"
           append_header
           append_calendar
-          append_lunar_calendar
-          append_weather
+          append_weather_and_uv
           append_financial_data
-          append_hacker_news
-          append_history
-          append_quote
-          append_joke
+          append_crypto_prices
+          append_enchantment_idea
+          append_art_of_the_day
           append_footer
           echo "Hoàn thành cập nhật nội dung."
-
-          # --- Thêm file vào staging area để chuẩn bị commit ---
+          
           git add "$file"
 
       - name: Commit và đẩy code lên repo (nếu có thay đổi)
