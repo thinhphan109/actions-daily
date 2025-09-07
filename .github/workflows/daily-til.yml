@@ -184,15 +184,49 @@ jobs:
           git add "$file"
 
       - name: Commit và đẩy code lên repo (nếu có thay đổi)
+        id: commit_step
         shell: bash
         run: |
           set -euo pipefail
           if ! git diff --cached --quiet; then
+            echo "changes=true" >> $GITHUB_OUTPUT
             git config user.name "${{ github.actor }}"
             git config user.email "${{ github.actor }}@users.noreply.github.com"
             git commit -m "📝 Cập nhật nhật ký tự động ngày $(date +%F)"
             git push
           else
+            echo "changes=false" >> $GITHUB_OUTPUT
             echo "Không có gì thay đổi để commit."
           fi
+
+      - name: Gửi thông báo đến Discord
+        if: steps.commit_step.outputs.changes == 'true'
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "Cảnh báo: DISCORD_WEBHOOK_URL secret chưa được thiết lập. Bỏ qua việc gửi thông báo."
+            exit 0
+          fi
+          
+          file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/$(date +%F).md"
+          
+          json_payload=$(jq -n \
+            --arg title "📝 Nhật Ký Tự Động Hóa - $(date +%F)" \
+            --arg url "$file_url" \
+            --arg description "File nhật ký cho ngày hôm nay đã được tạo và cập nhật thành công. [Nhấn vào đây để xem]($file_url)" \
+            '{
+              "username": "GitHub Actions Bot",
+              "avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+              "embeds": [{
+                "title": $title,
+                "url": $url,
+                "description": $description,
+                "color": 3447003,
+                "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"
+              }]
+            }')
+
+          curl -H "Content-Type: application/json" -d "$json_payload" "$DISCORD_WEBHOOK_URL"
 
