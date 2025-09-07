@@ -2,8 +2,7 @@ name: Daily TIL
 
 on:
   schedule:
-    # 17:05 UTC = 00:05 ICT (VN)
-    - cron: '5 17 * * *'
+    - cron: '5 17 * * *'  # 17:05 UTC = 00:05 ICT
   workflow_dispatch:
 
 permissions:
@@ -38,7 +37,7 @@ jobs:
             echo "Today's file already exists: $file"
           fi
 
-      - name: Append modules (1: Calendar, 7: Mini-kata, 15: Weather Hanoi)
+      - name: Append modules (Calendar + Kata + Weather)
         shell: bash
         env:
           CITY: "Ha Noi"
@@ -48,18 +47,18 @@ jobs:
           set -euo pipefail
           export TZ=Asia/Ho_Chi_Minh
 
-          # Xác định file hôm nay
+          # Today's file
           today=$(date +%F)
           year=$(date +%Y); month=$(date +%m)
           file="til/$year/$month/$today.md"
           [ -f "$file" ] || printf '# %s\n' "$today" > "$file"
 
-          # Cài jq nếu thiếu
+          # jq (if missing)
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y && sudo apt-get install -y jq
           fi
 
-          #### Module 1: Calendar (offline)
+          # --- Module 1: Calendar (offline, idempotent)
           if ! grep -q '^<!-- MOD-1-CALENDAR -->$' "$file"; then
             dow_num=$(date +%u)
             case "$dow_num" in
@@ -76,73 +75,72 @@ jobs:
             {
               echo
               echo "<!-- MOD-1-CALENDAR -->"
-              echo "## 📅 Hôm nay"
-              echo "- Ngày: $today ($dow)"
-              echo "- Tuần ISO: $iso_week — DayOfYear: $day_of_year"
+              echo "## Hom nay"
+              echo "- Ngay: $today ($dow)"
+              echo "- Tuan ISO: $iso_week — DayOfYear: $day_of_year"
             } >> "$file"
           fi
 
-          #### Module 7: Mini-kata (offline)
+          # --- Module 7: Mini-kata (offline deck)
           if ! grep -q '^<!-- MOD-7-KATA -->$' "$file"; then
             KATA_ARR=(
-              'Implement a function `dedupe_keep_order(arr)` (Python) loại phần tử trùng, giữ nguyên thứ tự.'
-              'Write `flattenN(arr, n)` (JS) phẳng mảng lồng tối đa độ sâu n.'
-              'Viết `is_palindrome(s)` (Python) bỏ qua ký tự không chữ/số & không phân biệt hoa thường.'
-              'Implement `throttle(fn, wait)` (JS) trả về hàm chỉ chạy tối đa 1 lần mỗi wait ms.'
-              'Viết `fib_gen(n)` (Python) generator yield n số Fibonacci đầu tiên (không dùng đệ quy).'
-              'Implement `formatVND(n)` (JS) trả về chuỗi tiền tệ VND (dùng Intl.NumberFormat nếu có).'
-              'Viết `count_status(logs)` (Python) nhận list dòng log HTTP, trả về dict {status: count}.'
-              'Implement `uniqueBy(arr, key)` (JS) loại trùng theo khóa (string hoặc accessor fn).'
-              'Viết `two_sum(nums, target)` (Python) trả về cặp chỉ số i,j sao cho nums[i]+nums[j]=target.'
-              'Implement `groupBy(arr, key)` (JS) nhóm phần tử theo thuộc tính/khóa.'
+              'Implement a function `dedupe_keep_order(arr)` (Python) loai phan tu trung, giu nguyen thu tu.'
+              'Write `flattenN(arr, n)` (JS) phang mang long toi da do sau n.'
+              'Viet `is_palindrome(s)` (Python) bo qua ky tu khong chu/so & khong phan biet hoa thuong.'
+              'Implement `throttle(fn, wait)` (JS) tra ve ham chi chay toi da 1 lan moi wait ms.'
+              'Viet `fib_gen(n)` (Python) generator yield n so Fibonacci dau tien (khong dung de quy).'
+              'Implement `formatVND(n)` (JS) tra ve chuoi tien te VND (Intl.NumberFormat neu co).'
+              'Viet `count_status(logs)` (Python) tra ve dict {status: count} tu danh sach log HTTP.'
+              'Implement `uniqueBy(arr, key)` (JS) loai trung theo khoa (string hoac accessor fn).'
+              'Viet `two_sum(nums, target)` (Python) tra ve cap chi so i,j sao cho nums[i]+nums[j]=target.'
+              'Implement `groupBy(arr, key)` (JS) nhom phan tu theo thuoc tinh/khoa.'
             )
             doy=$(date +%j); doy=$((10#$doy))
             len=${#KATA_ARR[@]}
             idx=$(( (doy - 1) % len ))
             kata="${KATA_ARR[$idx]}"
-
             {
               echo
               echo "<!-- MOD-7-KATA -->"
-              echo "## 🧩 Mini-kata (ngày $today)"
+              echo "## Mini-kata"
               echo "- $kata"
               echo
-              echo "Gợi ý khởi đầu:"
+              echo "Go i y khoi dau:"
               echo '```python'
-              echo '# TODO: giải ở đây'
+              echo '# TODO: giai o day'
               echo '```'
             } >> "$file"
           fi
 
-          #### Module 15: Weather (Open-Meteo, no key)
+          # --- Module 15: Weather (Open-Meteo, no key)
           if ! grep -q '^<!-- MOD-15-WEATHER -->$' "$file"; then
             wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&timezone=Asia%2FHo_Chi_Minh" || true)
             if [ -n "$wjson" ]; then
               temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty')
               wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty')
               code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty')
-              desc="Không rõ"
+              desc="Khong ro"
               case "$code" in
-                0) desc="Trời quang mây" ;;
-                1|2|3) desc="Ít mây / Nhiều mây" ;;
-                45|48) desc="Sương mù" ;;
-                51|53|55) desc="Mưa phùn" ;;
-                61|63|65) desc="Mưa vừa/đậm" ;;
-                71|73|75) desc="Tuyết rơi" ;;
-                80|81|82) desc="Mưa rào" ;;
-                95) desc="Dông" ;;
-                96|99) desc="Dông kèm mưa đá" ;;
+                0) desc="Troi quang may" ;;
+                1|2|3) desc="It may / Nhieu may" ;;
+                45|48) desc="Suong mu" ;;
+                51|53|55) desc="Mua phun" ;;
+                61|63|65) desc="Mua vua/dam" ;;
+                71|73|75) desc="Tuyet roi" ;;
+                80|81|82) desc="Mua rao" ;;
+                95) desc="Dong" ;;
+                96|99) desc="Dong kem mua da" ;;
               esac
               {
                 echo
                 echo "<!-- MOD-15-WEATHER -->"
-                echo "## 🌤️ Thời tiết ${CITY} (hiện tại)"
+                echo "## Thoi tiet $CITY (hien tai)"
                 if [ -n "${temp}" ] && [ -n "${wind}" ] && [ -n "${code}" ]; then
-                  echo "- Nhiệt độ: ${temp}°C"
-                  echo "- Gió: ${wind} km/h"
-                  echo "- Mã/Diễn giải: ${code} — ${desc}"
+                  echo "- Nhiet do: ${temp}°C"
+                  echo "- Gio: ${wind} km/h"
+                  echo "- Ma/ Dien giai: ${code} — ${desc}"
                 else
-                  echo "- (Không lấy được dữ liệu)"
+                  echo "- (Khong lay duoc du lieu)"
                 fi
               } >> "$file"
             fi
