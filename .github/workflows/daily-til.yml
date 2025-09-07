@@ -34,17 +34,13 @@ jobs:
           today=$(date +%F)
           file="$today.md"
 
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "jq not found. Installing..."
-            sudo apt-get update -y && sudo apt-get install -y jq
-          fi
-          if ! command -v bc >/dev/null 2>&1; then
-            echo "bc not found. Installing..."
-            sudo apt-get update -y && sudo apt-get install -y bc
+          if ! command -v jq >/dev/null 2>&1 || ! command -v bc >/dev/null 2>&1; then
+            echo "Installing missing tools (jq, bc)..."
+            sudo apt-get update -y && sudo apt-get install -y jq bc
           fi
 
           # ========================================================================
-          # === ĐỊNH NGHĨA CÁC HÀM MODULE (PHIÊN BẢN SỬA LỖI & NÂNG CẤP) ===========
+          # === ĐỊNH NGHĨA CÁC HÀM MODULE ==========================================
           # ========================================================================
 
           function append_header() {
@@ -65,80 +61,52 @@ jobs:
             if ! grep -q '<!-- WEATHER-UV-MODULE -->' "$file"; then
               wjson=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
               if [ -n "$wjson" ] && echo "$wjson" | jq -e . >/dev/null 2>&1; then
-                temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty'); code=$(echo "$wjson" | jq -r '.current_weather.weathercode // empty'); desc="Không rõ"
-                case "$code" in 0) desc="Trời quang mây" ;; 1|2|3) desc="Ít mây / Nhiều mây" ;; 45|48) desc="Sương mù" ;; 51|53|55) desc="Mưa phùn" ;; 61|63|65) desc="Mưa vừa/đậm" ;; 80|81|82) desc="Mưa rào" ;; 95) desc="Dông" ;; *) desc="Không xác định" ;; esac
-                
+                temp=$(echo "$wjson" | jq -r '.current_weather.temperature // empty'); wind=$(echo "$wjson" | jq -r '.current_weather.windspeed // empty');
                 uv_index=$(echo "$wjson" | jq -r '.daily.uv_index_max[0] // empty' | cut -d'.' -f1)
-                uv_desc="Không xác định"
-                if [ -n "$uv_index" ]; then
-                    if (( uv_index <= 2 )); then uv_desc="Thấp - Không cần bảo vệ"
-                    elif (( uv_index <= 5 )); then uv_desc="Trung bình - Cần che chắn"
-                    elif (( uv_index <= 7 )); then uv_desc="Cao - Cần bôi kem chống nắng"
-                    elif (( uv_index <= 10 )); then uv_desc="Rất cao - Hạn chế ra ngoài"
-                    else uv_desc="Cực kỳ cao - Tránh ra ngoài trời"
-                    fi
+                { echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"; echo "- **Nhiệt độ**: ${temp}°C / **Gió**: ${wind} km/h"; if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index"; fi; } >> "$file"
+              fi
+            fi
+          }
+          
+          function append_cve_news() {
+            if ! grep -q '<!-- CVE-MODULE -->' "$file"; then
+              cvejson=$(curl -fsSL "https://cve.circl.lu/api/last" || true)
+              if [ -n "$cvejson" ] && echo "$cvejson" | jq -e '.[0]' >/dev/null 2>&1; then
+                latest_cve=$(echo "$cvejson" | jq '.[0]')
+                cve_id=$(echo "$latest_cve" | jq -r '.id')
+                cve_summary=$(echo "$latest_cve" | jq -r '.summary')
+                { echo; echo "---"; echo "<!-- CVE-MODULE -->"; echo "## 🛡️ Cảnh Báo An Ninh Mạng (CVE)"; echo "- **Mã lỗi**: $cve_id"; echo "- **Tóm tắt**: $cve_summary"; } >> "$file"
+              fi
+            fi
+          }
+          
+          function append_word_of_the_day() {
+            if ! grep -q '<!-- WORD-MODULE -->' "$file"; then
+              word=$(curl -fsSL "https://random-word-api.herokuapp.com/word" | jq -r '.[0]')
+              if [ -n "$word" ]; then
+                defjson=$(curl -fsSL "https://api.dictionaryapi.dev/api/v2/entries/en/${word}" || true)
+                if [ -n "$defjson" ] && ! echo "$defjson" | jq -e '.title == "No Definitions Found"'; then
+                  definition=$(echo "$defjson" | jq -r '.[0].meanings[0].definitions[0].definition // empty')
+                  phonetic=$(echo "$defjson" | jq -r '.[0].phonetic // ""')
+                  { echo; echo "---"; echo "<!-- WORD-MODULE -->"; echo "## ✍️ Từ Vựng Truyền Cảm Hứng"; echo "- **Từ**: \`$word\` ($phonetic)"; echo "- **Định nghĩa**: $definition"; } >> "$file"
                 fi
-                { echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"; if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi; if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index ($uv_desc)"; fi; } >> "$file"
-              else
-                echo "Cảnh báo: API Thời tiết/UV thất bại. Bỏ qua module này."
               fi
             fi
           }
 
-          function append_financial_data() {
-            if ! grep -q '<!-- FINANCE-MODULE -->' "$file"; then
-              ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
-              goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true)
-              usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
-              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then
-                  rate_raw=$(echo "$ratejson" | jq -r '.rates.VND')
-                  if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then
-                      usd_vnd_rate=$(printf "%.0f" "$rate_raw")
-                  fi
-              fi
-              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then
-                  gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1)
-                  if [ -n "$gold_sell_raw" ] && [ "$gold_sell_raw" != "null" ]; then
-                      gold_sell_formatted=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l))
-                      gold_sell="${gold_sell_formatted} triệu"
-                  fi
-              else
-                  echo "Cảnh báo: Không thể lấy dữ liệu giá vàng hoặc API trả về rỗng."
-              fi
-              { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
-            fi
-          }
-          
-          function append_crypto_prices() {
-            if ! grep -q '<!-- CRYPTO-MODULE -->' "$file"; then
-              COIN_IDS="bitcoin,ethereum,solana,dogecoin,tether"
-              cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=${COIN_IDS}&vs_currencies=usd" || true)
-              if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then
-                output=""
-                # Bitcoin
-                btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd');
-                if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then btc_price=$(printf "%.2f" "$btc_price_raw"); output+="- **Bitcoin (BTC)**: \$${btc_price} USD\n"; fi
-                # Ethereum
-                eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd');
-                if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then eth_price=$(printf "%.2f" "$eth_price_raw"); output+="- **Ethereum (ETH)**: \$${eth_price} USD\n"; fi
-                # Solana
-                sol_price_raw=$(echo "$cryptojson" | jq -r '.solana.usd');
-                if [ -n "$sol_price_raw" ] && [ "$sol_price_raw" != "null" ]; then sol_price=$(printf "%.2f" "$sol_price_raw"); output+="- **Solana (SOL)**: \$${sol_price} USD\n"; fi
-                # Dogecoin
-                doge_price_raw=$(echo "$cryptojson" | jq -r '.dogecoin.usd');
-                if [ -n "$doge_price_raw" ] && [ "$doge_price_raw" != "null" ]; then doge_price=$(printf "%.4f" "$doge_price_raw"); output+="- **Dogecoin (DOGE)**: \$${doge_price} USD\n"; fi
-                # Tether (USDT)
-                usdt_price_raw=$(echo "$cryptojson" | jq -r '.tether.usd');
-                if [ -n "$usdt_price_raw" ] && [ "$usdt_price_raw" != "null" ]; then usdt_price=$(printf "%.4f" "$usdt_price_raw"); output+="- **Tether (USDT)**: \$${usdt_price} USD\n"; fi
-                output=$(echo -e "${output}" | sed '/^$/d')
-                { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo -e "$output"; } >> "$file"
+          function append_game_quote() {
+            if ! grep -q '<!-- GAME-QUOTE-MODULE -->' "$file"; then
+              gamejson=$(curl -fsSL "https://gaming-quotes.vercel.app/api/random" || true)
+              if [ -n "$gamejson" ] && echo "$gamejson" | jq -e . >/dev/null 2>&1; then
+                quote=$(echo "$gamejson" | jq -r '.quote')
+                author=$(echo "$gamejson" | jq -r '.author')
+                { echo; echo "---"; echo "<!-- GAME-QUOTE-MODULE -->"; echo "## 💬 Trích Dẫn Từ Thế Giới Game"; echo "> \"$quote\""; echo ">"; echo "> — ***$author***"; } >> "$file"
               fi
             fi
           }
-          
+
           function append_art_of_the_day() {
             if ! grep -q '<!-- ART-MODULE -->' "$file"; then
-              echo "Đang lấy Tác phẩm nghệ thuật trong ngày..."
               pagination_json=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id&limit=1" || true)
               if [ -n "$pagination_json" ] && echo "$pagination_json" | jq -e . >/dev/null 2>&1; then
                 total_pages=$(echo "$pagination_json" | jq -r '.pagination.total_pages // 1000')
@@ -150,21 +118,15 @@ jobs:
                   if [ "$image_id" != "null" ]; then
                     image_url="https://www.artic.edu/iiif/2/${image_id}/full/843,/0/default.jpg"
                     { echo; echo "---"; echo "<!-- ART-MODULE -->"; echo "## 🖼️ Tác Phẩm Nghệ Thuật Trong Ngày"; echo "- **Tên**: $title"; echo "- **Tác giả**: $artist"; echo "![${title}](${image_url})"; } >> "$file"
-                  else
-                    echo "Cảnh báo: Tác phẩm nghệ thuật tìm thấy không có ảnh. Bỏ qua."
                   fi
-                else
-                  echo "Cảnh báo: Không thể lấy dữ liệu Tác phẩm nghệ thuật."
                 fi
-              else
-                  echo "Cảnh báo: Không thể lấy thông tin phân trang của API Tác phẩm nghệ thuật."
               fi
             fi
           }
 
           function append_footer() {
             if ! grep -q '<!-- FOOTER-MODULE -->' "$file"; then
-              { echo; echo "---"; echo "<!-- FOOTER-MODULE -->"; echo "> *Ghi chú này được tạo tự động bởi [GitHub Actions](https://github.com/features/actions).*" ; } >> "$file"
+              { echo; echo "---"; echo "<!-- FOOT-MODULE -->"; echo "> *Ghi chú này được tạo tự động bởi [GitHub Actions](https://github.com/features/actions).*" ; } >> "$file"
             fi
           }
 
@@ -175,8 +137,9 @@ jobs:
           append_header
           append_calendar
           append_weather_and_uv
-          append_financial_data
-          append_crypto_prices
+          append_cve_news
+          append_word_of_the_day
+          append_game_quote
           append_art_of_the_day
           append_footer
           echo "Hoàn thành cập nhật nội dung."
