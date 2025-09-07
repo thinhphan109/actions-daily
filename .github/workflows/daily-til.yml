@@ -163,9 +163,24 @@ jobs:
             if ! grep -q '<!-- STOIC-MODULE -->' "$file"; then
               stoicjson=$(curl -fsSL "https://stoic-quotes.com/api/quote" || true)
               if [ -n "$stoicjson" ] && echo "$stoicjson" | jq -e . >/dev/null 2>&1; then
-                quote_en=$(echo "$stoicjson" | jq -r '.quote'); author=$(echo "$stoicjson" | jq -r '.author'); quote_vi="$quote_en"; quote_en_encoded=$(echo "$quote_en" | sed 's/ /%20/g'); translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${quote_en_encoded}&langpair=en|vi" || true)
-                if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText'); if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$quote_en" ]; then quote_vi="$translated_text"; fi; fi
-                { echo; echo "---"; echo "<!-- STOIC-MODULE -->"; echo "## 🏛️ Triết Lý Stoic"; echo "> $quote_vi"; echo ">"; echo "> — ***$author***"; } >> "$file"
+                quote_en=$(echo "$stoicjson" | jq -r '.quote')
+                author=$(echo "$stoicjson" | jq -r '.author')
+                
+                # CHỈ CHẠY KHI TRÍCH DẪN KHÔNG BỊ RỖNG (NULL)
+                if [ -n "$quote_en" ] && [ "$quote_en" != "null" ]; then
+                  quote_vi="$quote_en"
+                  quote_en_encoded=$(echo "$quote_en" | sed 's/ /%20/g')
+                  translation_json=$(curl -fsSL "https://api.mymemory.translated.net/get?q=${quote_en_encoded}&langpair=en|vi" || true)
+                  if [ -n "$translation_json" ] && echo "$translation_json" | jq -e . >/dev/null 2>&1; then 
+                    translated_text=$(echo "$translation_json" | jq -r '.responseData.translatedText')
+                    if [ -n "$translated_text" ] && [ "$translated_text" != "NO QUERY SPECIFIED!" ] && [ "$translated_text" != "$quote_en" ]; then 
+                      quote_vi="$translated_text"
+                    fi
+                  fi
+                  { echo; echo "---"; echo "<!-- STOIC-MODULE -->"; echo "## 🏛️ Triết Lý Stoic"; echo "> $quote_vi"; echo ">"; echo "> — ***$author***"; } >> "$file"
+                else
+                  echo "Cảnh báo: API Triết Lý Stoic trả về trích dẫn rỗng. Bỏ qua module này."
+                fi
               fi
             fi
           }
@@ -176,9 +191,6 @@ jobs:
             fi
           }
 
-          # ========================================================================
-          # === GỌI CÁC HÀM ĐỂ THÊM NỘI DUNG =======================================
-          # ========================================================================
           echo "Bắt đầu cập nhật file: $file"
           append_header
           append_calendar
@@ -196,9 +208,6 @@ jobs:
           
           git add "$file"
           
-          # ========================================================================
-          # === TẠO DỮ LIỆU CHO THÔNG BÁO DISCORD ==================================
-          # ========================================================================
           echo "Đang tạo tóm tắt cho Discord..."
           wjson_discord=$(curl -fsSL "https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current_weather=true&daily=uv_index_max&timezone=Asia%2FHo_Chi_Minh" || true)
           weather_line="Thời tiết: Đang cập nhật..."; uv_line="Chỉ số UV: Đang cập nhật..."
@@ -247,4 +256,5 @@ jobs:
           description="File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết]($file_url)"
           json_payload=$(jq -n --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" --arg url "$file_url" --arg description "$description" --arg weather_value "$WEATHER_DATA" --arg uv_value "$UV_DATA" --arg advice_value "$ADVICE_DATA" --arg holiday_value "$HOLIDAY_DATA" '{"username": "Nhật Ký Bot","avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png","embeds": [{"title": $title,"url": $url,"description": $description,"color": 3447003,"fields": [{ "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },{ "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },{ "name": "💡 Lời khuyên ngắn", "value": $advice_value, "inline": false }],"footer": { "text": "Cập nhật lúc" },"timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"}]} | .embeds[0].fields += (if $holiday_value != "" then [{ "name": "🇻🇳 Ngày Lễ Việt Nam", "value": $holiday_value, "inline": false }] else [] end)')
           curl -H "Content-Type: application/json" -d "$json_payload" "$DISCORD_WEBHOOK_URL"
+
 
