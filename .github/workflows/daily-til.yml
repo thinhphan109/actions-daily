@@ -38,14 +38,13 @@ jobs:
             echo "jq not found. Installing..."
             sudo apt-get update -y && sudo apt-get install -y jq
           fi
-          # Đảm bảo bc được cài đặt cho các phép tính tài chính
           if ! command -v bc >/dev/null 2>&1; then
             echo "bc not found. Installing..."
             sudo apt-get update -y && sudo apt-get install -y bc
           fi
 
           # ========================================================================
-          # === ĐỊNH NGHĨA CÁC HÀM MODULE ==========================================
+          # === ĐỊNH NGHĨA CÁC HÀM MODULE (PHIÊN BẢN SỬA LỖI & NÂNG CẤP) ===========
           # ========================================================================
 
           function append_header() {
@@ -79,12 +78,7 @@ jobs:
                     else uv_desc="Cực kỳ cao - Tránh ra ngoài trời"
                     fi
                 fi
-
-                { 
-                  echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"
-                  if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi
-                  if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index ($uv_desc)"; fi
-                } >> "$file"
+                { echo; echo "---"; echo "<!-- WEATHER-UV-MODULE -->"; echo "## 🌤️ Thời tiết & Chỉ số UV tại ${CITY}"; if [ -n "${temp}" ]; then echo "- **Nhiệt độ**: ${temp}°C"; echo "- **Gió**: ${wind} km/h"; echo "- **Hiện tượng**: ${desc}"; else echo "- (Không lấy được dữ liệu thời tiết)"; fi; if [ -n "$uv_index" ]; then echo "- **Chỉ số UV**: $uv_index ($uv_desc)"; fi; } >> "$file"
               else
                 echo "Cảnh báo: API Thời tiết/UV thất bại. Bỏ qua module này."
               fi
@@ -94,17 +88,22 @@ jobs:
           function append_financial_data() {
             if ! grep -q '<!-- FINANCE-MODULE -->' "$file"; then
               ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
-              goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true) # API VÀNG MỚI
+              goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true)
               usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
               if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then
-                  usd_vnd_rate=$(echo "$ratejson" | jq '.rates.VND | tonumber | printf "%.0f"' 2>/dev/null || echo "Lỗi")
-              fi
-              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results' >/dev/null 2>&1; then
-                  gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1)
-                  if [ -n "$gold_sell_raw" ]; then
-                    gold_sell=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l))
-                    gold_sell="${gold_sell} triệu"
+                  rate_raw=$(echo "$ratejson" | jq -r '.rates.VND')
+                  if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then
+                      usd_vnd_rate=$(printf "%.0f" "$rate_raw")
                   fi
+              fi
+              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then
+                  gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1)
+                  if [ -n "$gold_sell_raw" ] && [ "$gold_sell_raw" != "null" ]; then
+                      gold_sell_formatted=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l))
+                      gold_sell="${gold_sell_formatted} triệu"
+                  fi
+              else
+                  echo "Cảnh báo: Không thể lấy dữ liệu giá vàng hoặc API trả về rỗng."
               fi
               { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
             fi
@@ -112,52 +111,53 @@ jobs:
           
           function append_crypto_prices() {
             if ! grep -q '<!-- CRYPTO-MODULE -->' "$file"; then
-              cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd" || true)
+              COIN_IDS="bitcoin,ethereum,solana,dogecoin,tether"
+              cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=${COIN_IDS}&vs_currencies=usd" || true)
               if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then
-                # Lấy dữ liệu thô bằng jq
-                btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd')
-                eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd')
-                
-                btc_price="N/A"; eth_price="N/A"
-                
-                # Định dạng bằng printf của shell để tránh lỗi quoting
-                if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then
-                    btc_price=$(printf "%.2f" "$btc_price_raw")
-                fi
-                if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then
-                    eth_price=$(printf "%.2f" "$eth_price_raw")
-                fi
-
-                { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo "- **Bitcoin (BTC)**: \$${btc_price} USD"; echo "- **Ethereum (ETH)**: \$${eth_price} USD"; } >> "$file"
+                output=""
+                # Bitcoin
+                btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd');
+                if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then btc_price=$(printf "%.2f" "$btc_price_raw"); output+="- **Bitcoin (BTC)**: \$${btc_price} USD\n"; fi
+                # Ethereum
+                eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd');
+                if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then eth_price=$(printf "%.2f" "$eth_price_raw"); output+="- **Ethereum (ETH)**: \$${eth_price} USD\n"; fi
+                # Solana
+                sol_price_raw=$(echo "$cryptojson" | jq -r '.solana.usd');
+                if [ -n "$sol_price_raw" ] && [ "$sol_price_raw" != "null" ]; then sol_price=$(printf "%.2f" "$sol_price_raw"); output+="- **Solana (SOL)**: \$${sol_price} USD\n"; fi
+                # Dogecoin
+                doge_price_raw=$(echo "$cryptojson" | jq -r '.dogecoin.usd');
+                if [ -n "$doge_price_raw" ] && [ "$doge_price_raw" != "null" ]; then doge_price=$(printf "%.4f" "$doge_price_raw"); output+="- **Dogecoin (DOGE)**: \$${doge_price} USD\n"; fi
+                # Tether (USDT)
+                usdt_price_raw=$(echo "$cryptojson" | jq -r '.tether.usd');
+                if [ -n "$usdt_price_raw" ] && [ "$usdt_price_raw" != "null" ]; then usdt_price=$(printf "%.4f" "$usdt_price_raw"); output+="- **Tether (USDT)**: \$${usdt_price} USD\n"; fi
+                output=$(echo -e "${output}" | sed '/^$/d')
+                { echo; echo "---"; echo "<!-- CRYPTO-MODULE -->"; echo "## 📈 Giá Tiền Mã Hóa"; echo -e "$output"; } >> "$file"
               fi
-            fi
-          }
-          
-          function append_enchantment_idea() {
-            if ! grep -q '<!-- ENCHANTMENT-MODULE -->' "$file"; then
-              IDEAS_ARRAY=(
-                "**Tên**: Sét Đánh Trả | **Hiệu ứng**: Khi bị tấn công, có 10% cơ hội gọi một tia sét xuống kẻ tấn công. | **Áp dụng cho**: Giáp"
-                "**Tên**: Hút Sinh Lực | **Hiệu ứng**: Mỗi đòn đánh hồi lại 5% sát thương gây ra thành máu. | **Áp dụng cho**: Vũ khí cận chiến"
-                "**Tên**: Đạn Xuyên Thấu | **Hiệu ứng**: Mũi tên bắn ra có thể xuyên qua tối đa 2 mục tiêu, gây 75% sát thương cho mục tiêu thứ hai. | **Áp dụng cho**: Cung"
-                "**Tên**: Bước Chân Băng Giá | **Hiệu ứng**: Tạo ra một vệt băng tạm thời trên mặt nước khi di chuyển. | **Áp dụng cho**: Giày"
-                "**Tên**: Lưỡi Kiếm Độc Tố | **Hiệu ứng**: Đòn đánh có 20% cơ hội gây hiệu ứng Độc II trong 5 giây. | **Áp dụng cho**: Kiếm"
-              )
-              day_of_year=$(date +%j); day_of_year=$((10#$day_of_year)); len=${#IDEAS_ARRAY[@]}; idx=$(( (day_of_year - 1) % len )); idea="${IDEAS_ARRAY[$idx]}"
-              { echo; echo "---"; echo "<!-- ENCHANTMENT-MODULE -->"; echo "## 🪄 Ý Tưởng Enchantment"; echo "> $idea"; } >> "$file"
             fi
           }
           
           function append_art_of_the_day() {
             if ! grep -q '<!-- ART-MODULE -->' "$file"; then
-              # Lấy một tác phẩm ngẫu nhiên từ 1000 trang đầu tiên
-              random_page=$((1 + RANDOM % 1000))
-              artjson=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id,title,artist_display,image_id&limit=1&page=${random_page}" || true)
-              if [ -n "$artjson" ] && [ "$(echo "$artjson" | jq -r '.data | length')" -gt 0 ]; then
-                title=$(echo "$artjson" | jq -r '.data[0].title'); artist=$(echo "$artjson" | jq -r '.data[0].artist_display'); image_id=$(echo "$artjson" | jq -r '.data[0].image_id')
-                if [ "$image_id" != "null" ]; then
-                  image_url="https://www.artic.edu/iiif/2/${image_id}/full/843,/0/default.jpg"
-                  { echo; echo "---"; echo "<!-- ART-MODULE -->"; echo "## 🖼️ Tác Phẩm Nghệ Thuật Trong Ngày"; echo "- **Tên**: $title"; echo "- **Tác giả**: $artist"; echo "![${title}](${image_url})"; } >> "$file"
+              echo "Đang lấy Tác phẩm nghệ thuật trong ngày..."
+              pagination_json=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id&limit=1" || true)
+              if [ -n "$pagination_json" ] && echo "$pagination_json" | jq -e . >/dev/null 2>&1; then
+                total_pages=$(echo "$pagination_json" | jq -r '.pagination.total_pages // 1000')
+                random_page=$((1 + RANDOM % total_pages))
+                artjson=$(curl -fsSL "https://api.artic.edu/api/v1/artworks/search?query[term][is_public_domain]=true&fields=id,title,artist_display,image_id&limit=1&page=${random_page}" || true)
+                if [ -n "$artjson" ] && [ "$(echo "$artjson" | jq -r '.data | length')" -gt 0 ]; then
+                  artwork=$(echo "$artjson" | jq '.data[0]')
+                  title=$(echo "$artwork" | jq -r '.title'); artist=$(echo "$artwork" | jq -r '.artist_display' | sed 's/<[^>]*>//g' | cut -d ',' -f 1 | head -n 1); image_id=$(echo "$artwork" | jq -r '.image_id')
+                  if [ "$image_id" != "null" ]; then
+                    image_url="https://www.artic.edu/iiif/2/${image_id}/full/843,/0/default.jpg"
+                    { echo; echo "---"; echo "<!-- ART-MODULE -->"; echo "## 🖼️ Tác Phẩm Nghệ Thuật Trong Ngày"; echo "- **Tên**: $title"; echo "- **Tác giả**: $artist"; echo "![${title}](${image_url})"; } >> "$file"
+                  else
+                    echo "Cảnh báo: Tác phẩm nghệ thuật tìm thấy không có ảnh. Bỏ qua."
+                  fi
+                else
+                  echo "Cảnh báo: Không thể lấy dữ liệu Tác phẩm nghệ thuật."
                 fi
+              else
+                  echo "Cảnh báo: Không thể lấy thông tin phân trang của API Tác phẩm nghệ thuật."
               fi
             fi
           }
@@ -177,7 +177,6 @@ jobs:
           append_weather_and_uv
           append_financial_data
           append_crypto_prices
-          append_enchantment_idea
           append_art_of_the_day
           append_footer
           echo "Hoàn thành cập nhật nội dung."
