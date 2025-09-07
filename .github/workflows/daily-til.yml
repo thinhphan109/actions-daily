@@ -2,7 +2,7 @@ name: Daily TIL
 
 on:
   schedule:
-    # Chạy 00:05 Asia/Ho_Chi_Minh (ICT). GitHub Actions dùng UTC, nên 17:05 UTC = 00:05 ICT.
+    # 17:05 UTC = 00:05 ICT (VN)
     - cron: '5 17 * * *'
   workflow_dispatch:
 
@@ -19,6 +19,7 @@ jobs:
       - name: Create today's TIL (if missing)
         shell: bash
         run: |
+          set -euo pipefail
           export TZ=Asia/Ho_Chi_Minh
           today=$(date +%F)
           year=$(date +%Y)
@@ -27,15 +28,7 @@ jobs:
           file="$dir/$today.md"
           mkdir -p "$dir"
           if [ ! -f "$file" ]; then
-            cat > "$file" <<'EOF'
-# $(date +%F)
-
-- Học được gì:
-- Code snippet:
-- Link PR/Issue trong ngày:
-EOF
-            # thay tiêu đề đúng ngày
-            sed -i "1 s/.*/# $today/" "$file"
+            printf '# %s\n\n- Học được gì:\n- Code snippet:\n- Link PR/Issue trong ngày:\n' "$today" > "$file"
             git add "$file"
           else
             echo "Today's file already exists: $file"
@@ -44,12 +37,11 @@ EOF
       - name: Commit & push (if changes)
         shell: bash
         run: |
-          export TZ=Asia/Ho_Chi_Minh
+          set -euo pipefail
           if ! git diff --cached --quiet; then
             git config user.name "${GITHUB_REPOSITORY_OWNER}"
             git config user.email "${GITHUB_REPOSITORY_OWNER}@users.noreply.github.com"
-            today=$(date +%F)
-            git commit -m "docs(til): add ${today}"
+            git commit -m "docs(til): add $(date +%F)"
             git push
           else
             echo "No changes to commit"
