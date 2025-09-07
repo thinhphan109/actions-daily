@@ -41,7 +41,7 @@ jobs:
       - name: Append modules (1: Calendar, 7: Mini-kata, 15: Weather Hanoi)
         shell: bash
         env:
-          CITY: "Ha Noi"   # ASCII cho chắc YAML
+          CITY: "Ha Noi"
           LAT: "21.03"
           LON: "105.85"
         run: |
@@ -82,7 +82,7 @@ jobs:
             } >> "$file"
           fi
 
-          #### Module 7: Mini-kata (offline, mảng Bash thuần)
+          #### Module 7: Mini-kata (offline)
           if ! grep -q '^<!-- MOD-7-KATA -->$' "$file"; then
             KATA_ARR=(
               'Implement a function `dedupe_keep_order(arr)` (Python) loại phần tử trùng, giữ nguyên thứ tự.'
