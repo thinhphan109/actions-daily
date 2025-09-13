@@ -1,10 +1,10 @@
 name: Nhật Ký Tự Động Hóa Hàng Ngày
 
 on:
-  schedule:
+  # schedule:
     # Chạy vào 00:05 giờ Việt Nam mỗi ngày (17:05 UTC)
-    - cron: '5 17 * * *'
-  workflow_dispatch: # Cho phép chạy thủ công
+    # - cron: '5 17 * * *'
+  workflow_dispatch: # Chỉ cho phép chạy thủ công
 
 permissions:
   contents: write
