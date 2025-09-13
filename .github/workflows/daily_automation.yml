@@ -36,7 +36,18 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
+          pip install requests beautifulsoup4 selenium
+
+      - name: Install Chrome and ChromeDriver
+        run: |
+          # Cài đặt Chrome
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
+          # ChromeDriver sẽ được tự động quản lý bởi Selenium 4.x
+          echo "Chrome version: $(google-chrome --version)"
 
       - name: Cập nhật nội dung tự động
         id: update_file
@@ -102,25 +113,43 @@ jobs:
             fi
           }
           function append_financial_data() {
-            if ! grep -q '' "$file"; then
+            if ! grep -q '<!-- FINANCE-MODULE -->' "$file"; then
               ratejson=$(curl --connect-timeout 5 -fsSL "https://open.er-api.com/v6/latest/USD" || true)
-              goldjson=$(curl --connect-timeout 5 -fsSL "https://vapi.vnappmob.com/api/v2/gold" || true)
-              usd_vnd_rate="Đang cập nhật..."; gold_sell="Đang cập nhật..."
-              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then rate_raw=$(echo "$ratejson" | jq -r '.rates.VND'); if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then usd_vnd_rate=$(printf "%.0f" "$rate_raw"); fi; fi
-              if [ -n "$goldjson" ] && echo "$goldjson" | jq -e '.results | length > 0' >/dev/null 2>&1; then gold_sell_raw=$(echo "$goldjson" | jq -r '.results[] | select(.name | contains("SJC")) | .sell' | head -n 1); if [ -n "$gold_sell_raw" ] && [ "$gold_sell_raw" != "null" ]; then gold_sell_formatted=$(printf "%.3f" $(echo "$gold_sell_raw / 1000000" | bc -l)); gold_sell="${gold_sell_formatted} triệu"; fi; fi
-              { echo; echo "---"; echo ""; echo "## 💰 Dữ liệu tài chính"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo "- **Vàng SJC (bán ra)**: $gold_sell / lượng"; } >> "$file"
+              usd_vnd_rate="Đang cập nhật..."
+              if [ -n "$ratejson" ] && echo "$ratejson" | jq -e . >/dev/null 2>&1; then 
+                rate_raw=$(echo "$ratejson" | jq -r '.rates.VND')
+                if [ -n "$rate_raw" ] && [ "$rate_raw" != "null" ]; then 
+                  usd_vnd_rate=$(printf "%.0f" "$rate_raw")
+                fi
+              fi
+              { echo; echo "---"; echo "<!-- FINANCE-MODULE -->"; echo "## 💰 Tỷ Giá Ngoại Tệ"; echo "- **Tỷ giá USD/VND**: 1 USD ≈ $usd_vnd_rate VND"; echo; echo "*Giá vàng chi tiết xem phần PNJ bên dưới*"; } >> "$file"
             fi
           }
           function append_pnj_gold() {
-            if ! grep -q '' "$file"; then
+            if ! grep -q '<!-- PNJ-GOLD-MODULE -->' "$file"; then
+              echo "🔍 Đang crawl giá vàng từ PNJ bằng Selenium..."
               local pnj_output_file="pnj_gold_prices.md"
-              python get_gold_price.py "$pnj_output_file"
+              
+              # Đặt biến môi trường để Selenium hoạt động trong headless mode
+              export DISPLAY=:99
+              
+              # Chạy script crawl giá vàng với timeout
+              timeout 60s python get_gold_price.py "$pnj_output_file" || {
+                echo "⚠️ Timeout hoặc lỗi khi crawl giá vàng PNJ"
+                echo "# Bảng Giá Vàng PNJ" > "$pnj_output_file"
+                echo "*Không thể crawl dữ liệu vào lúc này do timeout hoặc lỗi kỹ thuật*" >> "$pnj_output_file"
+              }
+              
               if [ -s "$pnj_output_file" ]; then
-                { echo; echo "---"; echo ""; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; cat "$pnj_output_file"; } >> "$file"
+                { echo; echo "---"; echo "<!-- PNJ-GOLD-MODULE -->"; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo; cat "$pnj_output_file"; } >> "$file"
+                echo "✅ Đã thêm bảng giá vàng PNJ vào nhật ký"
               else
-                { echo; echo "---"; echo ""; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo "Không thể lấy dữ liệu giá vàng PNJ vào lúc này."; } >> "$file"
+                { echo; echo "---"; echo "<!-- PNJ-GOLD-MODULE -->"; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo "❌ Không thể crawl dữ liệu giá vàng PNJ vào lúc này."; echo "Vui lòng thử lại sau hoặc kiểm tra [trực tiếp tại PNJ](https://www.pnj.com.vn/site/gia-vang)"; } >> "$file"
+                echo "⚠️ Không thể crawl giá vàng, đã thêm thông báo lỗi"
               fi
-              rm "$pnj_output_file"
+              
+              # Dọn dẹp file tạm
+              [ -f "$pnj_output_file" ] && rm "$pnj_output_file"
             fi
           }
           function append_crypto_prices() { if ! grep -q '' "$file"; then COIN_IDS="bitcoin,ethereum,solana,binancecoin,ripple,dogecoin,tether"; cryptojson=$(curl -fsSL "https://api.coingecko.com/api/v3/simple/price?ids=${COIN_IDS}&vs_currencies=usd" || true); if [ -n "$cryptojson" ] && echo "$cryptojson" | jq -e . >/dev/null 2>&1; then output=""; btc_price_raw=$(echo "$cryptojson" | jq -r '.bitcoin.usd'); if [ -n "$btc_price_raw" ] && [ "$btc_price_raw" != "null" ]; then btc_price=$(printf "%.2f" "$btc_price_raw"); output+="- **Bitcoin (BTC)**: \$${btc_price} USD\n"; fi; eth_price_raw=$(echo "$cryptojson" | jq -r '.ethereum.usd'); if [ -n "$eth_price_raw" ] && [ "$eth_price_raw" != "null" ]; then eth_price=$(printf "%.2f" "$eth_price_raw"); output+="- **Ethereum (ETH)**: \$${eth_price} USD\n"; fi; sol_price_raw=$(echo "$cryptojson" | jq -r '.solana.usd'); if [ -n "$sol_price_raw" ] && [ "$sol_price_raw" != "null" ]; then sol_price=$(printf "%.2f" "$sol_price_raw"); output+="- **Solana (SOL)**: \$${sol_price} USD\n"; fi; bnb_price_raw=$(echo "$cryptojson" | jq -r '.binancecoin.usd'); if [ -n "$bnb_price_raw" ] && [ "$bnb_price_raw" != "null" ]; then bnb_price=$(printf "%.2f" "$bnb_price_raw"); output+="- **BNB**: \$${bnb_price} USD\n"; fi; xrp_price_raw=$(echo "$cryptojson" | jq -r '.ripple.usd'); if [ -n "$xrp_price_raw" ] && [ "$xrp_price_raw" != "null" ]; then xrp_price=$(printf "%.4f" "$xrp_price_raw"); output+="- **XRP**: \$${xrp_price} USD\n"; fi; doge_price_raw=$(echo "$cryptojson" | jq -r '.dogecoin.usd'); if [ -n "$doge_price_raw" ] && [ "$doge_price_raw" != "null" ]; then doge_price=$(printf "%.4f" "$doge_price_raw"); output+="- **Dogecoin (DOGE)**: \$${doge_price} USD\n"; fi; usdt_price_raw=$(echo "$cryptojson" | jq -r '.tether.usd'); if [ -n "$usdt_price_raw" ] && [ "$usdt_price_raw" != "null" ]; then usdt_price=$(printf "%.4f" "$usdt_price_raw"); output+="- **Tether (USDT)**: \$${usdt_price} USD\n"; fi; output=$(echo -e "${output}" | sed '/^$/d'); { echo; echo "---"; echo ""; echo "## 📈 Giá Tiền Mã Hóa"; echo -e "$output"; } >> "$file"; fi; fi; }
