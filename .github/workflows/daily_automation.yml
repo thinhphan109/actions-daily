@@ -1,12 +1,12 @@
 name: Nhật Ký Tự Động Hóa Hàng Ngày
 
 on:
-  schedule:
+  # schedule:
     # Chạy vào 00:05 sáng giờ Việt Nam (tức 17:05 UTC ngày hôm trước)
-    - cron: '5 17 * * *'
+    # - cron: '5 17 * * *'
     # Chạy vào 12:05 trưa giờ Việt Nam (tức 05:05 UTC cùng ngày)
-    - cron: '5 5 * * *'
-  workflow_dispatch:
+    # - cron: '5 5 * * *'
+  workflow_dispatch: # Chỉ cho phép chạy thủ công
 
 permissions:
   contents: write
@@ -57,10 +57,22 @@ jobs:
           set -euo pipefail
           
           today=$(date +%F)
+          current_hour=$(date +%H)
+          
+          # Xác định thời điểm chạy và tạo tên file phù hợp
+          if [ "$current_hour" -ge 0 ] && [ "$current_hour" -lt 12 ]; then
+            time_suffix="12AM"
+            display_time="00:05 sáng"
+          else
+            time_suffix="12PM" 
+            display_time="12:05 trưa"
+          fi
           
           output_dir="DailyNotes"
           mkdir -p "$output_dir"
-          file="$output_dir/$today.md"
+          file="$output_dir/$today-$time_suffix.md"
+          
+          echo "📝 Tạo file nhật ký: $file (chạy lúc $display_time)"
 
           if ! command -v jq >/dev/null 2>&1 || ! command -v bc >/dev/null 2>&1; then
             echo "Installing missing tools (jq, bc)..."
@@ -69,7 +81,8 @@ jobs:
 
           function append_header() {
             if [ ! -f "$file" ]; then
-              printf '# 🚀 Nhật Ký Tự Động Hóa - %s\n' "$today" > "$file"
+              printf '# 🚀 Nhật Ký Tự Động Hóa - %s (%s)\n' "$today" "$display_time" > "$file"
+              printf '\n*File được tạo tự động lúc %s*\n' "$display_time" >> "$file"
             fi
           }
           function append_calendar() {
@@ -215,7 +228,24 @@ jobs:
           HOLIDAY_DATA: ${{ steps.update_file.outputs.holiday_field_value }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then echo "Cảnh báo: DISCORD_WEBHOOK_URL secret chưa được thiết lập. Bỏ qua việc gửi thông báo."; exit 0; fi
-          file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/DailyNotes/$(date +%F).md"
+          
+          # Xác định tên file cho Discord notification
+          today_discord=$(date +%F)
+          current_hour_discord=$(date +%H)
+          if [ "$current_hour_discord" -ge 0 ] && [ "$current_hour_discord" -lt 12 ]; then
+            time_suffix_discord="12AM"
+          else
+            time_suffix_discord="12PM"
+          fi
+          
+          file_url="https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/DailyNotes/$today_discord-$time_suffix_discord.md"
+          # Tạo title với thời gian
+          if [ "$current_hour_discord" -ge 0 ] && [ "$current_hour_discord" -lt 12 ]; then
+            time_display="🌅 Sáng"
+          else
+            time_display="🌇 Trưa"
+          fi
+          
           description="File nhật ký đã được cập nhật với các thông tin mới nhất. [Nhấn vào đây để xem chi tiết]($file_url)"
-          json_payload=$(jq -n --arg title "📝 Nhật Ký Ngày Mới: $(date +'%d/%m/%Y')" --arg url "$file_url" --arg description "$description" --arg weather_value "$WEATHER_DATA" --arg uv_value "$UV_DATA" --arg advice_value "$ADVICE_DATA" --arg holiday_value "$HOLIDAY_DATA" '{"username": "Nhật Ký Bot","avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png","embeds": [{"title": $title,"url": $url,"description": $description,"color": 3447003,"fields": [{ "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },{ "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },{ "name": "💡 Lời khuyên ngắn", "value": $advice_value, "inline": false }],"footer": { "text": "Cập nhật lúc" },"timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"}]} | .embeds[0].fields += (if $holiday_value != "" then [{ "name": "🇻🇳 Ngày Lễ Việt Nam", "value": $holiday_value, "inline": false }] else [] end)')
+          json_payload=$(jq -n --arg title "📝 Nhật Ký $time_display: $(date +'%d/%m/%Y')" --arg url "$file_url" --arg description "$description" --arg weather_value "$WEATHER_DATA" --arg uv_value "$UV_DATA" --arg advice_value "$ADVICE_DATA" --arg holiday_value "$HOLIDAY_DATA" '{"username": "Nhật Ký Bot","avatar_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png","embeds": [{"title": $title,"url": $url,"description": $description,"color": 3447003,"fields": [{ "name": "🌤️ Thời tiết (${{ env.CITY }})", "value": $weather_value, "inline": true },{ "name": "☀️ Chỉ số UV", "value": $uv_value, "inline": true },{ "name": "💡 Lời khuyên ngắn", "value": $advice_value, "inline": false }],"footer": { "text": "Cập nhật lúc" },"timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'"}]} | .embeds[0].fields += (if $holiday_value != "" then [{ "name": "🇻🇳 Ngày Lễ Việt Nam", "value": $holiday_value, "inline": false }] else [] end)')
           curl -H "Content-Type: application/json" -d "$json_payload" "$DISCORD_WEBHOOK_URL"
