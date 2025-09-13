@@ -141,28 +141,42 @@ jobs:
           function append_pnj_gold() {
             if ! grep -q '<!-- PNJ-GOLD-MODULE -->' "$file"; then
               echo "🔍 Đang crawl giá vàng từ PNJ bằng Selenium..."
-              local pnj_output_file="pnj_gold_prices.md"
               
               # Đặt biến môi trường để Selenium hoạt động trong headless mode
               export DISPLAY=:99
               
-              # Chạy script crawl giá vàng với timeout
-              timeout 60s python get_gold_price.py "$pnj_output_file" || {
-                echo "⚠️ Timeout hoặc lỗi khi crawl giá vàng PNJ"
-                echo "# Bảng Giá Vàng PNJ" > "$pnj_output_file"
-                echo "*Không thể crawl dữ liệu vào lúc này do timeout hoặc lỗi kỹ thuật*" >> "$pnj_output_file"
-              }
+              # Tạo tên file tạm unique để tránh conflict
+              local pnj_temp_file="/tmp/pnj_gold_$(date +%s)_$$.md"
               
-              if [ -s "$pnj_output_file" ]; then
-                { echo; echo "---"; echo "<!-- PNJ-GOLD-MODULE -->"; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo; cat "$pnj_output_file"; } >> "$file"
-                echo "✅ Đã thêm bảng giá vàng PNJ vào nhật ký"
+              # Chạy script crawl giá vàng với timeout, output vào file tạm
+              local gold_data=""
+              if timeout 60s python get_gold_price.py "$pnj_temp_file" 2>/dev/null; then
+                if [ -s "$pnj_temp_file" ]; then
+                  # Đọc dữ liệu từ file tạm vào biến
+                  gold_data=$(cat "$pnj_temp_file")
+                  echo "✅ Crawl giá vàng PNJ thành công"
+                else
+                  echo "⚠️ File output rỗng"
+                  gold_data=""
+                fi
               else
-                { echo; echo "---"; echo "<!-- PNJ-GOLD-MODULE -->"; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo "❌ Không thể crawl dữ liệu giá vàng PNJ vào lúc này."; echo "Vui lòng thử lại sau hoặc kiểm tra [trực tiếp tại PNJ](https://www.pnj.com.vn/site/gia-vang)"; } >> "$file"
-                echo "⚠️ Không thể crawl giá vàng, đã thêm thông báo lỗi"
+                echo "⚠️ Timeout hoặc lỗi khi crawl giá vàng PNJ"
+                gold_data=""
               fi
               
-              # Dọn dẹp file tạm
-              [ -f "$pnj_output_file" ] && rm "$pnj_output_file"
+              # Ghi trực tiếp vào file chính
+              { echo; echo "---"; echo "<!-- PNJ-GOLD-MODULE -->"; echo "## ⚜️ Bảng Giá Vàng PNJ Chi Tiết"; echo; } >> "$file"
+              
+              if [ -n "$gold_data" ]; then
+                echo "$gold_data" >> "$file"
+                echo "✅ Đã thêm dữ liệu giá vàng thực vào nhật ký"
+              else
+                { echo "❌ Không thể crawl dữ liệu giá vàng PNJ vào lúc này."; echo; echo "Vui lòng thử lại sau hoặc kiểm tra [trực tiếp tại PNJ](https://www.pnj.com.vn/site/gia-vang)"; } >> "$file"
+                echo "⚠️ Đã thêm thông báo lỗi vào nhật ký"
+              fi
+              
+              # Dọn dẹp file tạm (luôn luôn)
+              [ -f "$pnj_temp_file" ] && rm -f "$pnj_temp_file"
             fi
           }
           function append_crypto_prices() {
